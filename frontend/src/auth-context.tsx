@@ -7,19 +7,13 @@ import React, {
   useState,
 } from "react";
 
-import { api, tokenStore, User } from "./api";
+import { api, SignUpBody, tokenStore, User } from "./api";
 
 type AuthContextValue = {
   user: User | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
-  signUp: (body: {
-    email: string;
-    password: string;
-    full_name: string;
-    role: User["role"];
-    membership_tier: string;
-  }) => Promise<void>;
+  signUp: (body: SignUpBody) => Promise<void>;
   signOut: () => Promise<void>;
   refresh: () => Promise<void>;
 };

@@ -15,7 +15,9 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/src/auth-context";
 import { LuxButton } from "@/src/ui";
 import { colors, radius, spacing } from "@/src/theme";
+import { api } from "@/src/api";
 import type { User } from "@/src/api";
+import { Level, LEVEL_INFO } from "@/src/levels";
 
 type Role = User["role"];
 const ROLES: { value: Exclude<Role, "admin">; label: string; blurb: string }[] = [
@@ -25,21 +27,26 @@ const ROLES: { value: Exclude<Role, "admin">; label: string; blurb: string }[] =
 ];
 
 const TIERS: { value: string; label: string; blurb: string; price: string }[] = [
-  { value: "free_girl", label: "Free · Women", blurb: "Free forever for women.", price: "$0" },
-  { value: "trial_male", label: "1-Month Free", blurb: "First month free for men.", price: "$0 → $14.99/mo" },
-  { value: "member", label: "Member", blurb: "Member deals & discounts. Upgrade to Premium anytime.", price: "$14.99/mo" },
+  { value: "free_girl", label: "Ladies", blurb: "Bronze is free forever for women.", price: "Bronze free" },
+  { value: "trial_male", label: "Gentlemen", blurb: "Your first month of Bronze is on us.", price: "1st month free" },
+  { value: "member", label: "No perk", blurb: "Start paying from day one.", price: "Standard" },
 ];
+const LEVELS: Level[] = ["bronze", "silver", "gold"];
 
 export default function SignUp() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { signUp } = useAuth();
+  const { signUp, refresh } = useAuth();
   const [step, setStep] = useState<"role" | "tier" | "form">("role");
   const [role, setRole] = useState<Exclude<Role, "admin">>("guest");
   const [tier, setTier] = useState("trial_male");
+  const [level, setLevel] = useState<Level>("bronze");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [phone, setPhone] = useState("");
+  const [city, setCity] = useState("");
+  const [optIn, setOptIn] = useState(true);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -52,7 +59,19 @@ export default function SignUp() {
     setBusy(true);
     try {
       const membership_tier = role === "venue_owner" ? "venue" : tier;
-      await signUp({ email: email.trim(), password, full_name: name.trim(), role, membership_tier });
+      await signUp({
+        email: email.trim(), password, full_name: name.trim(), role, membership_tier,
+        phone: phone.trim() || undefined, city: city.trim() || undefined, marketing_opt_in: optIn,
+      });
+      if (role !== "venue_owner" && level !== "bronze") {
+        try {
+          await api.upgrade(level);
+          await refresh();
+        } catch {
+          router.replace("/membership");
+          return;
+        }
+      }
       router.replace("/(tabs)");
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Sign up failed");
@@ -98,7 +117,27 @@ export default function SignUp() {
         {step === "tier" && (
           <>
             <Text style={styles.title}>Choose your tier</Text>
-            <Text style={styles.subtitle}>Members get deals. Premium gets everything.</Text>
+            <Text style={styles.subtitle}>Gold unlocks the most exclusive venues and services.</Text>
+            <View style={styles.cards}>
+              {LEVELS.map((l) => {
+                const info = LEVEL_INFO[l];
+                return (
+                  <Pressable
+                    key={l}
+                    testID={`level-${l}`}
+                    onPress={() => setLevel(l)}
+                    style={[styles.card, level === l && { borderColor: info.color, backgroundColor: colors.surfaceTertiary }]}
+                  >
+                    <View style={styles.tierHeader}>
+                      <Text style={[styles.cardTitle, { color: info.color }]}>{info.label}</Text>
+                      <Text style={styles.price}>${info.price}/mo</Text>
+                    </View>
+                    <Text style={styles.cardBlurb}>{info.perks.slice(1).join(" · ")}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <Text style={styles.label}>Bronze welcome perk</Text>
             <View style={styles.cards}>
               {TIERS.map((t) => (
                 <Pressable
@@ -127,6 +166,16 @@ export default function SignUp() {
               <Field label="Full name" testID="signup-name" value={name} onChangeText={setName} />
               <Field label="Email" testID="signup-email" value={email} onChangeText={setEmail} keyboardType="email-address" />
               <Field label="Password" testID="signup-password" value={password} onChangeText={setPassword} secureTextEntry />
+              <Field label="Phone (optional)" testID="signup-phone" value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
+              <Field label="City (optional)" testID="signup-city" value={city} onChangeText={setCity} />
+              <Pressable testID="signup-optin" accessibilityRole="checkbox" accessibilityState={{ checked: optIn }} onPress={() => setOptIn(!optIn)} style={styles.optin}>
+                <View style={[styles.box, optIn && styles.boxOn]}>
+                  {optIn ? <Text style={styles.check}>✓</Text> : null}
+                </View>
+                <Text style={styles.optinText}>
+                  Send me the Nocturne Journal, member deals and event invites. Unsubscribe anytime in Profile.
+                </Text>
+              </Pressable>
               {err ? <Text style={styles.err} testID="signup-error">{err}</Text> : null}
               <LuxButton testID="signup-submit" label={busy ? "Creating…" : "Create account"} onPress={submit} loading={busy} />
             </View>
@@ -210,6 +259,14 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   err: { color: colors.error, fontSize: 13 },
+  optin: { flexDirection: "row", gap: spacing.md, alignItems: "flex-start", paddingVertical: spacing.xs },
+  box: {
+    width: 22, height: 22, borderRadius: radius.sm, borderWidth: 1.5, borderColor: colors.borderStrong,
+    alignItems: "center", justifyContent: "center", marginTop: 1,
+  },
+  boxOn: { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary },
+  check: { color: colors.onBrandPrimary, fontSize: 14, fontWeight: "800" },
+  optinText: { flex: 1, color: colors.onSurfaceSecondary, fontSize: 13, lineHeight: 19 },
   footer: { alignItems: "center", marginTop: spacing.xl },
   footerText: { color: colors.muted, fontSize: 14 },
   footerLink: { color: colors.brandPrimary, fontWeight: "700" },

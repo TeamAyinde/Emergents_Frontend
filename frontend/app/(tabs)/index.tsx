@@ -19,6 +19,7 @@ import FeatherIcon from "@react-native-vector-icons/feather";
 import { api, EventItem } from "@/src/api";
 import { useAuth } from "@/src/auth-context";
 import { colors, radius, spacing } from "@/src/theme";
+import { LevelBadge } from "@/src/levels";
 
 const CATEGORIES = ["All", "Tonight", "This Week", "VIP", "DJ", "Open Bar"];
 
@@ -41,6 +42,7 @@ export default function Home() {
     queryFn: () => api.listEvents(),
   });
   const filtered = (events ?? []).filter((e) => matches(e, category));
+  const { data: unread } = useQuery({ queryKey: ["concierge-unread"], queryFn: () => api.conciergeUnread(), refetchInterval: 15000 });
 
   return (
     <View style={styles.root}>
@@ -49,6 +51,16 @@ export default function Home() {
           <Text style={styles.hello} testID="home-hello">Good evening,</Text>
           <Text style={styles.name} testID="home-name">{user?.full_name?.split(" ")[0] ?? "friend"}</Text>
         </View>
+        <View style={{ flexDirection: "row", gap: spacing.sm }}>
+          <Pressable testID="home-concierge-btn" onPress={() => router.push("/concierge")} style={styles.scanBtn}>
+            <FeatherIcon name="message-circle" color={colors.brandPrimary} size={20} />
+            {unread?.unread ? <View style={styles.unreadDot} testID="concierge-unread-dot" /> : null}
+          </Pressable>
+          {user?.role === "venue_owner" || user?.role === "admin" ? (
+            <Pressable testID="home-host-btn" onPress={() => router.push("/host/new-event")} style={styles.scanBtn}>
+              <FeatherIcon name="plus" color={colors.brandPrimary} size={20} />
+            </Pressable>
+          ) : null}
         {isStaff ? (
           <Pressable
             testID="scan-btn"
@@ -58,6 +70,7 @@ export default function Home() {
             <FeatherIcon name="maximize" color={colors.brandPrimary} size={20} />
           </Pressable>
         ) : null}
+        </View>
       </View>
 
       <View style={styles.chipScroll}>
@@ -120,9 +133,12 @@ function EventCard({ item, onPress }: { item: EventItem; onPress: () => void }) 
           <Text style={styles.dateDay}>{d.getDate()}</Text>
           <Text style={styles.dateMonth}>{d.toLocaleString("en", { month: "short" }).toUpperCase()}</Text>
         </View>
-        <View style={styles.cityBadge}>
-          <FeatherIcon name="map-pin" color={colors.onSurface} size={10} />
-          <Text style={styles.cityText}>{item.city}</Text>
+        <View style={{ alignItems: "flex-end", gap: 6 }}>
+          <View style={styles.cityBadge}>
+            <FeatherIcon name="map-pin" color={colors.onSurface} size={10} />
+            <Text style={styles.cityText}>{item.city}</Text>
+          </View>
+          <LevelBadge level={item.min_level} />
         </View>
       </View>
       <View style={styles.cardBottom}>
@@ -161,6 +177,7 @@ const styles = StyleSheet.create({
     alignItems: "center", justifyContent: "center",
   },
   chipScroll: { height: 56, justifyContent: "center" },
+  unreadDot: { position: "absolute", top: 8, right: 8, width: 10, height: 10, borderRadius: 5, backgroundColor: colors.brandSecondary },
   chipRow: { paddingHorizontal: spacing.lg, gap: spacing.sm, alignItems: "center" },
   chip: {
     flexShrink: 0, height: 40, paddingHorizontal: spacing.lg,

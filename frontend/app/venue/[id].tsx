@@ -18,6 +18,8 @@ import FeatherIcon from "@react-native-vector-icons/feather";
 import { api } from "@/src/api";
 import { colors, radius, spacing } from "@/src/theme";
 import { LuxButton } from "@/src/ui";
+import { useAuth } from "@/src/auth-context";
+import { canAccess, Level, LEVEL_INFO } from "@/src/levels";
 
 const SERVICES = [
   { v: "table", label: "Table", price: 200 },
@@ -33,6 +35,8 @@ export default function VenueDetails() {
   const [service, setService] = useState(SERVICES[0]);
   const [party, setParty] = useState("4");
   const [notes, setNotes] = useState("");
+  const { user } = useAuth();
+  const lvl = (user?.level ?? "bronze") as Level;
   const nights = Array.from({ length: 7 }, (_, i) => {
     const d = new Date();
     d.setDate(d.getDate() + i + 1);
@@ -65,7 +69,8 @@ export default function VenueDetails() {
     );
   }
 
-  const fee = service.price * 0.15;
+  const fee = service.price * LEVEL_INFO[lvl].fee;
+  const locked = !canAccess(lvl, v.min_level);
   const total = service.price + fee;
 
   return (
@@ -160,7 +165,7 @@ export default function VenueDetails() {
 
           <View style={styles.breakdown}>
             <Row label="Base" value={`$${service.price.toFixed(2)}`} />
-            <Row label="Platform fee (15%)" value={`$${fee.toFixed(2)}`} />
+            <Row label={`Concierge fee (${LEVEL_INFO[lvl].label} ${Math.round(LEVEL_INFO[lvl].fee * 100)}%)`} value={`$${fee.toFixed(2)}`} />
             <View style={styles.sep} />
             <Row label="Total deposit" value={`$${total.toFixed(2)}`} bold />
           </View>
@@ -178,12 +183,20 @@ export default function VenueDetails() {
             {book.error.message}
           </Text>
         ) : null}
+        {locked ? (
+          <LuxButton
+            testID="unlock-venue-btn"
+            label={`${LEVEL_INFO[v.min_level as Level].label} members only · Upgrade`}
+            onPress={() => router.push("/membership")}
+          />
+        ) : (
         <LuxButton
           testID="confirm-reservation-btn"
           label={book.isPending ? "Booking…" : book.isSuccess ? "Back to venues" : `Reserve · $${total.toFixed(2)}`}
           onPress={() => (book.isSuccess ? router.back() : book.mutate())}
           loading={book.isPending}
         />
+        )}
       </View>
     </View>
   );

@@ -19,7 +19,7 @@ PROMOTER = ("promoter@nocturne.app", "PromoterPass123!")
 VENUE = ("venue@nocturne.app", "VenuePass123!")
 ADMIN = ("admin@nocturne.app", "AdminPass123!")
 
-CREATED = {"users": [], "events": [], "tickets": [], "reservations": []}
+CREATED = {"users": [], "events": [], "tickets": [], "reservations": [], "withdrawal_users": []}
 WALLET_DELTA = {"promoter": 0.0}
 
 
@@ -48,6 +48,9 @@ def cleanup():
     db.reservations.delete_many({"id": {"$in": CREATED["reservations"]}})
     db.events.delete_many({"id": {"$in": CREATED["events"]}})
     db.users.delete_many({"id": {"$in": CREATED["users"]}})
+    # withdrawals are now recorded (iteration 3): remove the ones this run created
+    for uid, since in CREATED["withdrawal_users"]:
+        db.withdrawals.delete_many({"user_id": uid, "created_at": {"$gte": since}})
     if WALLET_DELTA["promoter"]:
         db.users.update_one({"email": PROMOTER[0]}, {"$inc": {"wallet_balance": -round(WALLET_DELTA["promoter"], 2)}})
 
@@ -69,9 +72,14 @@ def venue_owner():
 
 @pytest.fixture(scope="module")
 def event():
+    # bronze test users can only buy bronze-gated events (membership levels, iteration 4)
     r = requests.get(f"{API}/events")
     assert r.status_code == 200 and len(r.json()) > 0
-    return r.json()[0]
+    return next(e for e in r.json() if e.get("min_level", "bronze") == "bronze")
+
+
+def bronze_venue_id():
+    return next(v for v in requests.get(f"{API}/venues").json() if v.get("min_level", "bronze") == "bronze")["id"]
 
 
 def register(role="guest", tier=None):
@@ -167,12 +175,13 @@ class TestTickets:
         assert any(x["id"] == t["id"] for x in requests.get(f"{API}/tickets/mine", headers=h(guest["access_token"])).json())
 
     def test_quantity_bounds(self, guest, event):
-        for q in [0, -1, 9, 100]:
+        # seeded events have plus_one_limit 3 -> max 4 per guest; 8 is now rejected by design
+        for q in [0, -1, 9, 100, 8, 5]:
             assert buy(guest["access_token"], event["id"], q).status_code == 400, q
-        assert buy(guest["access_token"], event["id"], 8).status_code == 201
+        assert buy(guest["access_token"], event["id"], 4).status_code == 201
 
     def test_past_event_rejected(self, guest, venue_owner):
-        vid = requests.get(f"{API}/venues").json()[0]["id"]
+        vid = bronze_venue_id()
         body = {"title": "TEST_PastEvent", "venue_id": vid, "date": future(-2), "price": 10, "image_url": "https://example.com/x.jpg", "description": "TEST"}
         assert requests.post(f"{API}/events", json=body, headers=h(guest["access_token"])).status_code == 403
         r = requests.post(f"{API}/events", json=body, headers=h(venue_owner["access_token"]))
@@ -194,6 +203,7 @@ class TestTickets:
         for amt in [bal + 1000, 2, 1.5, -5, 0]:
             assert requests.post(f"{API}/promoter/withdraw", json={"amount": amt}, headers=h(tok)).status_code == 400, amt
         if bal >= 3:
+            CREATED["withdrawal_users"].append((promoter["user"]["id"], datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=5)))
             r = requests.post(f"{API}/promoter/withdraw", json={"amount": 3}, headers=h(tok))
             assert r.status_code == 200 and r.json() == {"withdrawn": 3, "fee": 2.0, "net": 1.0}
             WALLET_DELTA["promoter"] -= 3
@@ -250,17 +260,17 @@ class TestPromoter:
 class TestReservations:
     @pytest.mark.parametrize("svc,price", [("table", 200.0), ("booth", 400.0), ("bottle", 800.0)])
     def test_server_side_price(self, guest, svc, price):
-        vid = requests.get(f"{API}/venues").json()[0]["id"]
+        vid = bronze_venue_id()
         body = {"venue_id": vid, "date": future(), "party_size": 4, "service_type": svc, "base_price": 1, "notes": "TEST_res"}
         r = requests.post(f"{API}/reservations", json=body, headers=h(guest["access_token"]))
         assert r.status_code == 201, r.text
         d = r.json()
         CREATED["reservations"].append(d["id"])
-        assert d["base_price"] == price and d["platform_fee"] == round(price * 0.15, 2) and d["total"] == round(price * 1.15, 2)
+        assert d["base_price"] == price and d["platform_fee"] == round(price * 0.25, 2) and d["total"] == round(price * 1.25, 2)  # bronze 25% concierge fee
         assert any(x["id"] == d["id"] for x in requests.get(f"{API}/reservations/mine", headers=h(guest["access_token"])).json())
 
     def test_validation(self, guest):
-        vid = requests.get(f"{API}/venues").json()[0]["id"]
+        vid = bronze_venue_id()
         base = {"venue_id": vid, "date": future(), "party_size": 4, "service_type": "table", "base_price": 200}
         tok = h(guest["access_token"])
         assert requests.post(f"{API}/reservations", json={**base, "service_type": "x"}, headers=tok).status_code == 400
@@ -271,7 +281,7 @@ class TestReservations:
 
     def test_base_price_optional(self, guest):
         # base_price is ignored server-side, so clients should not be forced to send it
-        vid = requests.get(f"{API}/venues").json()[0]["id"]
+        vid = bronze_venue_id()
         r = requests.post(f"{API}/reservations", json={"venue_id": vid, "date": future(), "party_size": 2, "service_type": "table"},
                           headers=h(guest["access_token"]))
         if r.status_code == 201:

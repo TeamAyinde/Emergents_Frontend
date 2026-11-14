@@ -1,0 +1,46 @@
+{
+  "summary": "Iteration 5: tested concierge chat, table map/VIP packages, join/approval/waitlist, guest list, and Host Studio from backend to UI (390px mobile web). Backend: 73/73 pytest pass (62 existing, with test_quantity_bounds updated, plus 9 new feature tests and 1 race test that passed on its run in the full suite). One extra race run showed an OVERSELL: 2 tickets were issued on a capacity-1 event when 8 joins ran at the same time (1 of 2 runs). Frontend: every requested flow works end to end. Two medium issues: timestamps are sent without a timezone and will show at the wrong time for users outside UTC, and one Host Studio cover image returns 404. No deprecated Expo packages detected; no SafeAreaView issues detected. All test data removed and users/Rooftop Reverie reset.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/events/{id}/join (also /api/tickets/purchase)", "issue": "Two requests at once can oversell. join_event checks capacity with a no-op update ($inc tickets_sold: 0), then issue_ticket increments tickets_sold in a separate step. tests/test_nocturne_race.py: 8 joins at once on a capacity-1 event gave ['ticket','ticket',...] and tickets_sold=2 (1 of 2 runs). purchase_ticket has the same read-then-write gap. Fix: reserve the spots in one guarded update, update_one({id, tickets_sold: {$lte: cap-qty}}, {$inc: {tickets_sold: qty}}), then insert the ticket without incrementing again (undo the increment if the insert fails).", "priority": "HIGH"},
+      {"endpoint": "All datetime fields (events.date, created_at, last_at, event_date)", "issue": "The Motor client is created without tz_aware=True (server.py:43), so the API returns naive ISO strings such as '2026-11-18T21:00:00' with no Z. The frontend calls new Date(str) (for example src/chat-view.tsx:94 and the event dates), which reads strings without an offset as local time. Outside UTC, event times and chat times are off by the UTC offset. Example: a Los Angeles host picks 9 PM, the app stores 05:00 UTC, and the event page shows 5 AM. Fix: AsyncIOMotorClient(MONGO_URL, tz_aware=True), or serialize datetimes with a UTC offset.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "POST /api/host/requests/{rid} approve (kind=approval)", "issue": "Approving 'approval' requests never checks capacity, so tickets_sold can go past capacity silently. Capacity only grows for waitlist approvals."},
+      {"endpoint": "POST /api/events/{id}/join", "issue": "Nothing stops a member who already has a ticket from joining again. They can buy more tickets, or file a new approval request after being approved."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Host new-event cover picker", "issue": "Cover #2 (COVERS[1] = photo-1571266028243-d220c9c3b31f) returns HTTP 404 from Unsplash, so the tile is blank. Reference: app/host/new-event.tsx:18", "testID": "cover-1", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [
+      {"flow": "Admin inbox after replying", "issue": "Going back from /admin/thread/[id] shows the old preview text and unread badge until the next 5s poll. There is no query invalidation on send or on focus.", "affected_testIDs": ["thread-back", "thread-*"]}
+    ],
+    "design_issues": [
+      {"screen": "Host new-event", "issues": ["Switch toggles use the default teal thumb on web (no thumbColor set), which clashes with the gold theme. Reference: app/host/new-event.tsx:203"]},
+      {"screen": "Concierge", "issues": ["Suggestion chips are 40px tall, under the 44px touch target. Their testIDs contain spaces (chat-suggestion-Book me a VI)."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_nocturne_features.py", "/app/backend/tests/test_nocturne_race.py", "/app/backend/tests/test_nocturne_api.py", "/app/backend/tests/cleanup_iteration5.py", "/app/backend/tests/inspect_state.py", "/app/test_reports/pytest/pytest_results_iter5.xml"],
+  "action_items": [
+    "Make the join and purchase capacity check atomic: reserve tickets_sold in one guarded $inc before inserting the ticket (features.py:240-247, server.py:517-519, issue_ticket:556).",
+    "Return timezone-aware datetimes: AsyncIOMotorClient(MONGO_URL, tz_aware=True), or a pydantic serializer that adds the UTC offset. Then check the existing _aware() comparisons.",
+    "Replace the broken cover URL in app/host/new-event.tsx:18.",
+    "Optional: check capacity (or grow it) on approval-kind approvals; block repeat joins by members who already hold a ticket; invalidate the admin inbox query on reply; set Switch thumbColor; make suggestion chips at least 44px tall."
+  ],
+  "critical_code_review_comments": [
+    "features.py join_event: the '$inc tickets_sold: 0' update is only a check and reserves nothing, so there is a race (confirmed by test).",
+    "decide_request: issue_ticket runs after the status change. If it fails, the request stays approved with no ticket (no compensation step).",
+    "event_guests and host_event_detail call find_one for each ticket's user (N+1). Fine at the current scale.",
+    "Table booking uniqueness uses a partial unique index, which is correct; the 409 was confirmed."
+  ],
+  "updated_files": ["/app/backend/tests/test_nocturne_api.py (test_quantity_bounds: 8 and 5 now return 400, 4 returns 201)", "/app/backend/tests/test_nocturne_features.py (new)", "/app/backend/tests/test_nocturne_race.py (new)", "/app/backend/tests/cleanup_iteration5.py (new)", "/app/backend/tests/inspect_state.py (new, read-only)"],
+  "success_rate": {"backend": "100% of functional tests (73/73); concurrency defect found in separate race run", "frontend": "100% of requested flows working; 1 broken image, 1 timezone display bug"},
+  "seed_data_creation": "None kept. All TEST data created (tickets, table bookings, requests, concierge messages/threads, TEST events/venue) was deleted. tickets_sold restored, seeded users reset to bronze/wallet 0, Rooftop Reverie capacity is 2.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run pytest with -n 0. Container clock is around 2026-11-14. Seeded events have plus_one_limit 3. Venue owner and admin count as gold for tier rules. In Playwright, avoid force=True on table-* buttons: the sticky buy-ticket-btn can sit over the map and a forced click buys a ticket. Use locator.click() after scroll_into_view_if_needed. test_nocturne_race.py is flaky by design: it fails when the oversell happens. Run cleanup_iteration5.py after UI tests (adjust SINCE).",
+  "rca_of_issue": "Oversell: join_event only checks capacity (no-op update), and issue_ticket increments separately, so two requests at the same time both pass the check. Timezone: Mongo stores UTC; Motor returns naive datetimes; pydantic writes them out without an offset; JS Date reads them as local time."
+}

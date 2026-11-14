@@ -16,11 +16,14 @@ import FeatherIcon from "@react-native-vector-icons/feather";
 
 import { api, Venue } from "@/src/api";
 import { colors, radius, spacing } from "@/src/theme";
+import { LuxeList, JournalList } from "@/src/explore-lists";
+import { LevelBadge } from "@/src/levels";
 
 export default function Venues() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const [q, setQ] = useState("");
+  const [tab, setTab] = useState<"venues" | "luxe" | "journal">("venues");
   const { data, isLoading } = useQuery({
     queryKey: ["venues", q],
     queryFn: () => api.listVenues(q || undefined),
@@ -29,8 +32,22 @@ export default function Venues() {
   return (
     <View style={styles.root}>
       <View style={[styles.header, { paddingTop: insets.top + spacing.md }]}>
-        <Text style={styles.title}>Venues</Text>
-        <Text style={styles.subtitle}>{"California's best clubs, lounges & restaurants."}</Text>
+        <Text style={styles.title}>Explore</Text>
+        <View style={styles.segment}>
+          {(["venues", "luxe", "journal"] as const).map((t) => (
+            <Pressable
+              key={t}
+              testID={`explore-tab-${t}`}
+              onPress={() => setTab(t)}
+              style={[styles.segBtn, tab === t && styles.segBtnOn]}
+            >
+              <Text style={[styles.segText, tab === t && styles.segTextOn]}>
+                {t === "venues" ? "Venues" : t === "luxe" ? "Luxe Services" : "Journal"}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+        {tab === "venues" ? (
         <View style={styles.search}>
           <FeatherIcon name="search" color={colors.muted} size={16} />
           <TextInput
@@ -42,9 +59,14 @@ export default function Venues() {
             style={styles.searchInput}
           />
         </View>
+        ) : null}
       </View>
 
-      {isLoading ? (
+      {tab === "luxe" ? (
+        <LuxeList />
+      ) : tab === "journal" ? (
+        <JournalList />
+      ) : isLoading ? (
         <ActivityIndicator color={colors.brandPrimary} style={{ marginTop: spacing["2xl"] }} />
       ) : (
         <FlatList
@@ -64,6 +86,7 @@ function VenueCard({ v, onPress }: { v: Venue; onPress: () => void }) {
   return (
     <Pressable testID={`venue-${v.id}`} onPress={onPress} style={styles.card}>
       <Image source={v.image_url} style={styles.cardImg} contentFit="cover" />
+      <LevelBadge level={v.min_level} floating />
       <View style={styles.cardBody}>
         <View style={styles.rowBetween}>
           <Text style={styles.cat}>{v.category.toUpperCase()}</Text>
@@ -84,6 +107,14 @@ const styles = StyleSheet.create({
   header: { paddingHorizontal: spacing.lg, paddingBottom: spacing.md, gap: spacing.sm },
   title: { color: colors.onSurface, fontSize: 32, fontWeight: "800" },
   subtitle: { color: colors.muted, fontSize: 13 },
+  segment: {
+    flexDirection: "row", backgroundColor: colors.surfaceSecondary, borderRadius: radius.pill,
+    padding: 4, borderWidth: 1, borderColor: colors.border,
+  },
+  segBtn: { flex: 1, height: 40, borderRadius: radius.pill, alignItems: "center", justifyContent: "center" },
+  segBtnOn: { backgroundColor: colors.brandPrimary },
+  segText: { color: colors.onSurfaceSecondary, fontSize: 13, fontWeight: "700" },
+  segTextOn: { color: colors.onBrandPrimary },
   search: {
     flexDirection: "row", alignItems: "center", gap: spacing.sm,
     backgroundColor: colors.surfaceSecondary, borderRadius: radius.pill,

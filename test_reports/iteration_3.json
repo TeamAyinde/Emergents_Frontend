@@ -1,0 +1,48 @@
+{
+  "summary": "Iteration 3 (newsletter/luxe/admin). Backend: new suite test_nocturne_extras.py has 30 tests and all 30 pass. They cover register with consent fields, preferences toggle, partners and the category filter, partner bookings (20% fee, validation, mine), journal published/draft visibility, admin RBAC 403 on 8 endpoints, overview revenue math, members list, CSV export (opted-in only), journal CRUD and validation, a real Claude draft stream (title/summary/body format OK), booking confirm then a second change returning 400 with partner_fees updated, and withdrawal_fees recorded. Regression test_nocturne_api.py: 23/23 pass. Frontend (375px mobile web) checked: sign-up with phone/city and the opt-in box ticked by default (saved to DB); Explore segments venues/luxe/journal; Luxe chips filter; partner booking with day/units/guests/notes (DB values correct); Profile Luxe Requests list, marketing switch (saved to DB) and admin button shown only to admins; /admin blocked for non-admins; admin revenue card and stats, Export CSV download with export-msg, journal list, confirm/decline with revenue/pending updating live; compose with category, empty-topic check, draft filling title/summary/body (the draft endpoint was MOCKED in the UI test with page.route to stay within the 2 LLM calls), edit existing article then publish, and the article showing in the Journal. One HIGH bug: compose creates duplicate articles. Image issues on 2 partners.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/admin/members/export", "issue": "The CSV is open to formula injection. User-controlled full_name/city values starting with = + - @ are written as-is and will run as formulas in Excel/Sheets. Prefix such cells with a single quote (')."},
+      {"endpoint": "POST /api/admin/journal/draft", "issue": "gen() has no try/except. If the LLM fails mid-stream after the 200 header is sent, the client gets a cut-off body with no error. Catch the exception and yield/log an error marker."},
+      {"endpoint": "GET /api/partners?category=", "issue": "An unknown category returns 200 [] instead of 400. The PARTNER_CATEGORIES constant is never used for validation."},
+      {"endpoint": "POST /api/partner-bookings", "issue": "No upper limit on the date (bookings years ahead are accepted). The UI only offers 14 days."},
+      {"endpoint": "GET /api/admin/overview", "issue": "membership_mrr_estimate counts the free self-serve 'member' tier (guest/promoter seed users) at $14.99, so the MRR is overstated."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "admin/compose.tsx onSave", "issue": "After creating a new article, the screen stays on /admin/compose with no id. Saving again (for example: Save draft, toggle publish, Publish) calls createArticle a second time and creates a DUPLICATE article. Reproduced: two 'TEST_ DupCheck' docs, one published and one draft. Fix: store the returned id (setId or router.replace(`/admin/compose?id=${created.id}`)) or router.back() after save. Reference: /app/frontend/app/admin/compose.tsx:82-83", "testID": "compose-save-btn", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Explore > Luxe Services", "issues": [
+        "'Newport Luxe Yachts' cover image shows a scuba diver with fish, not a yacht (seed.py partner image_url)",
+        "'Royal Stretch Limousines' image shows a small Fiat 500 hatchback, not a limousine",
+        "'The Sunset Grand' (West Hollywood hotel) shows a tropical thatched-roof resort. Weak match."
+      ]},
+      {"screen": "Sign-up", "issues": ["The opt-in Pressable has no accessibilityRole='checkbox' or accessibilityState={{checked}}, so screen readers can't announce whether it is ticked (sign-up.tsx:138)"]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_nocturne_extras.py", "/app/backend/tests/test_nocturne_api.py", "/app/test_reports/pytest/pytest_iter3_extras.xml", "/app/test_reports/pytest/pytest_iter3_regression.xml"],
+  "action_items": [
+    "HIGH: Fix the duplicate article creation in admin/compose.tsx. After createArticle succeeds, switch to edit mode with the returned id, or navigate back.",
+    "Replace the partner images for Newport Luxe Yachts (scuba diver) and Royal Stretch Limousines (Fiat 500) with relevant yacht/limo photos in seed.py. Consider The Sunset Grand too.",
+    "Sanitize CSV cells against formula injection in /api/admin/members/export.",
+    "Add error handling inside the draft stream generator (extras.py:224).",
+    "Optional: validate the partner category filter (400 for unknown values), cap the booking date range, and stop counting the free 'member' tier in the MRR estimate."
+  ],
+  "critical_code_review_comments": [
+    "extras.py is clean: _id excluded everywhere, admin RBAC via require_roles, booking status change is atomic (filter status=requested).",
+    "Partner booking date is built client-side as local 18:00 then toISOString(). Users outside UTC will see the stored UTC day/time shift. Consider sending a date plus a local time string.",
+    "The legacy regression test test_nocturne_api.py left a withdrawals record behind (withdrawals are now persisted). I updated its cleanup to remove records it creates."
+  ],
+  "updated_files": ["/app/backend/tests/test_nocturne_extras.py (new)", "/app/backend/tests/test_nocturne_api.py (cleanup of withdrawals created by the run)"],
+  "success_rate": {"backend": "100% (30/30 new + 23/23 regression)", "frontend": "~93% (all requested flows work; compose duplicate-save bug)"},
+  "seed_data_creation": "None kept. Removed by id: TEST_ users (incl. the UI sign-up user), partner bookings, articles, withdrawals. The seeded promoter wallet float drift (-2.2e-16) was reset to 0.0. DB is back to 4 seeded users, 0 bookings, 0 withdrawals, 3 seeded articles.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run pytest with -n 0. xdist is on by default and breaks the module-level STATE sharing in test_nocturne_extras.py. The real LLM draft was called twice (budget used). The UI compose test mocked /api/admin/journal/draft via page.route, so real streaming into inputs on web (expo/fetch getReader) was not seen end to end in the browser. Partner page has a sticky bottom bar: avoid force=True clicks on units +/- because they hit the request button.",
+  "rca_of_issue": "Compose duplicate: the `id` comes only from useLocalSearchParams. onSave branches on `id ? updateArticle : createArticle` and never captures the created article's id, so every save of a new article does a POST."
+}

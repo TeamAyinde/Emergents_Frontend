@@ -32,11 +32,15 @@ JWT_EXPIRE_MINUTES = 60 * 24 * 7  # one week
 ALLOWED_ROLES = {"guest", "promoter", "venue_owner", "admin"}
 MEMBERSHIP_TIERS = {"free_girl", "trial_male", "member", "premium", "venue", "corporate"}
 SELF_SERVE_TIERS = {"free_girl", "trial_male", "member"}
+LEVEL_RANK = {"bronze": 0, "silver": 1, "gold": 2}
+LEVEL_PRICE = {"bronze": 14.99, "silver": 49.0, "gold": 149.0}
+LEVEL_BOOKING_FEE = {"bronze": 0.25, "silver": 0.20, "gold": 0.15}
+LEVEL_TICKET_DISCOUNT = {"bronze": 0.0, "silver": 0.10, "gold": 0.20}
 SERVICE_PRICES = {"table": 200.0, "booth": 400.0, "bottle": 800.0}
 PLATFORM_FEE_PCT = 0.15  # 15% platform fee on tickets / reservations
 WITHDRAWAL_FEE = 2.00
 
-client = AsyncIOMotorClient(MONGO_URL)
+client = AsyncIOMotorClient(MONGO_URL, tz_aware=True)
 db = client[DB_NAME]
 security = HTTPBearer(auto_error=False)
 
@@ -96,6 +100,9 @@ class RegisterIn(BaseModel):
     full_name: str = Field(min_length=1, max_length=80)
     role: str = "guest"
     membership_tier: str = "member"
+    phone: Optional[str] = Field(default=None, max_length=30)
+    city: Optional[str] = Field(default=None, max_length=60)
+    marketing_opt_in: bool = True
 
 
 class LoginIn(BaseModel):
@@ -109,8 +116,13 @@ class UserOut(BaseModel):
     full_name: str
     role: str
     membership_tier: str
+    level: str = "bronze"
+    level_since: Optional[datetime] = None
     referral_code: str
     wallet_balance: float
+    marketing_opt_in: bool = False
+    phone: Optional[str] = None
+    city: Optional[str] = None
 
 
 class TokenOut(BaseModel):
@@ -129,6 +141,7 @@ class VenueOut(BaseModel):
     rating: float
     price_range: str
     description: str
+    min_level: str = "bronze"
 
 
 class EventOut(BaseModel):
@@ -143,6 +156,13 @@ class EventOut(BaseModel):
     description: str
     tags: List[str]
     tickets_sold: int = 0
+    min_level: str = "bronze"
+    capacity: int = 200
+    approval_required: bool = False
+    plus_one_limit: int = 7
+    guest_list_visible: bool = True
+    has_tables: bool = False
+    created_by: Optional[str] = None
 
 
 class EventCreate(BaseModel):
@@ -153,6 +173,12 @@ class EventCreate(BaseModel):
     image_url: str
     description: str
     tags: List[str] = []
+    min_level: Optional[str] = None
+    capacity: int = Field(default=200, ge=1, le=10000)
+    approval_required: bool = False
+    plus_one_limit: int = Field(default=3, ge=0, le=7)
+    guest_list_visible: bool = True
+    table_min_spend: Optional[float] = Field(default=None, ge=0, le=100000)
 
 
 class TicketPurchaseIn(BaseModel):
@@ -253,8 +279,13 @@ def public_user(u: dict) -> UserOut:
         full_name=u["full_name"],
         role=u["role"],
         membership_tier=u["membership_tier"],
+        level=user_level(u),
+        level_since=u.get("level_since"),
         referral_code=u["referral_code"],
         wallet_balance=round(u.get("wallet_balance", 0.0), 2),
+        marketing_opt_in=u.get("marketing_opt_in", False),
+        phone=u.get("phone"),
+        city=u.get("city"),
     )
 
 
@@ -290,6 +321,33 @@ async def current_user(
     return user
 
 
+def user_level(u: dict) -> str:
+    if u.get("role") in ("admin", "venue_owner"):
+        return "gold"
+    return u.get("level", "bronze")
+
+
+def require_level(u: dict, min_level: str) -> None:
+    if LEVEL_RANK[user_level(u)] < LEVEL_RANK.get(min_level, 0):
+        raise HTTPException(403, f"{min_level.capitalize()} membership required")
+
+
+def make_tables(base: float, min_level: str) -> list:
+    """Default floor plan: 4 main-floor tables, 3 VIP booths, 1 stage-side skybox (positions in %)."""
+    plan = [
+        ("T1", "Main Floor", 6, 1.0, 15, 62), ("T2", "Main Floor", 6, 1.0, 38, 62),
+        ("T3", "Main Floor", 6, 1.0, 62, 62), ("T4", "Main Floor", 6, 1.0, 85, 62),
+        ("V1", "VIP", 8, 2.0, 15, 85), ("V2", "VIP", 8, 2.0, 50, 85), ("V3", "VIP", 8, 2.0, 85, 85),
+        ("S1", "Stage Skybox", 12, 4.0, 85, 30),
+    ]
+    tier_up = {"bronze": "silver", "silver": "gold", "gold": "gold"}
+    return [
+        {"id": tid, "name": tid, "section": sec, "capacity": cap, "min_spend": round(base * mult, 2),
+         "x": x, "y": y, "min_level": tier_up[min_level] if sec != "Main Floor" else min_level}
+        for (tid, sec, cap, mult, x, y) in plan
+    ]
+
+
 def require_roles(*roles: str):
     async def dep(user: Annotated[dict, Depends(current_user)]):
         if user["role"] not in roles:
@@ -319,8 +377,14 @@ async def register(body: RegisterIn):
         "full_name": body.full_name.strip(),
         "role": body.role,
         "membership_tier": body.membership_tier,
+        "level": "bronze",
+        "level_since": datetime.now(timezone.utc),
         "referral_code": _referral_code(body.full_name),
         "wallet_balance": 0.0,
+        "phone": (body.phone or "").strip() or None,
+        "city": (body.city or "").strip() or None,
+        "marketing_opt_in": body.marketing_opt_in,
+        "marketing_opt_in_at": datetime.now(timezone.utc) if body.marketing_opt_in else None,
         "created_at": datetime.now(timezone.utc),
     }
     await db.users.insert_one(doc)
@@ -391,9 +455,19 @@ async def create_event(
     venue = await db.venues.find_one({"id": body.venue_id}, {"_id": 0})
     if not venue:
         raise HTTPException(404, "Venue not found")
+    if user["role"] != "admin" and venue.get("owner_id") != user["id"]:
+        raise HTTPException(403, "You can only post events for your own venues")
     ev_date = body.date if body.date.tzinfo else body.date.replace(tzinfo=timezone.utc)
     if ev_date < datetime.now(timezone.utc):
         raise HTTPException(400, "Event date must be in the future")
+    if not body.title.strip() or body.price < 0 or body.price > 10000:
+        raise HTTPException(400, "Title and a price between $0 and $10,000 are required")
+    if not body.image_url.startswith("https://"):
+        raise HTTPException(400, "Image must be an https link")
+    min_level = body.min_level or venue.get("min_level", "bronze")
+    if min_level not in LEVEL_RANK:
+        raise HTTPException(400, "Unknown level")
+    tables = make_tables(body.table_min_spend, min_level) if body.table_min_spend else []
     doc = {
         "id": str(uuid.uuid4()),
         "title": body.title,
@@ -406,6 +480,13 @@ async def create_event(
         "description": body.description,
         "tags": body.tags,
         "tickets_sold": 0,
+        "min_level": min_level,
+        "capacity": body.capacity,
+        "approval_required": body.approval_required,
+        "plus_one_limit": body.plus_one_limit,
+        "guest_list_visible": body.guest_list_visible,
+        "tables": tables,
+        "has_tables": bool(tables),
         "created_by": user["id"],
         "created_at": datetime.now(timezone.utc),
     }
@@ -428,16 +509,32 @@ async def purchase_ticket(
     ev_date = event["date"] if event["date"].tzinfo else event["date"].replace(tzinfo=timezone.utc)
     if ev_date < datetime.now(timezone.utc):
         raise HTTPException(400, "This event has already happened")
-    qty = body.quantity
-    base = event["price"] * qty
+    require_level(user, event.get("min_level", "bronze"))
+    if body.quantity > 1 + event.get("plus_one_limit", 7):
+        raise HTTPException(400, f"Max {1 + event.get('plus_one_limit', 7)} tickets per guest")
+    if event.get("approval_required"):
+        raise HTTPException(409, "This event needs host approval — request to join")
+    return await issue_ticket(event, user, body.quantity, body.promoter_code)
+
+
+async def issue_ticket(event: dict, user: dict, qty: int, promoter_code: Optional[str], override: bool = False) -> "TicketOut":
+    """Atomically reserves `qty` spots (unless the host overrides capacity), then writes the ticket."""
+    cond = {"id": event["id"]}
+    if not override:
+        cond["$expr"] = {"$lte": [{"$add": [{"$ifNull": ["$tickets_sold", 0]}, qty]}, {"$ifNull": ["$capacity", 1000000]}]}
+    res = await db.events.update_one(cond, {"$inc": {"tickets_sold": qty}})
+    if res.modified_count == 0:
+        raise HTTPException(409, "Sold out — join the waitlist")
+    lvl = user_level(user)
+    base = round(event["price"] * qty * (1 - LEVEL_TICKET_DISCOUNT[lvl]), 2)
     platform_fee = round(base * PLATFORM_FEE_PCT, 2)
     total = round(base + platform_fee, 2)
 
     promoter_id = None
     promoter_earning = 0.0
-    if body.promoter_code:
+    if promoter_code:
         promoter = await db.users.find_one(
-            {"referral_code": body.promoter_code.upper(), "role": {"$in": ["promoter", "venue_owner", "admin"]}},
+            {"referral_code": promoter_code.upper(), "role": {"$in": ["promoter", "venue_owner", "admin"]}},
             {"_id": 0},
         )
         if promoter and promoter["id"] != user["id"]:
@@ -461,7 +558,6 @@ async def purchase_ticket(
         "created_at": datetime.now(timezone.utc),
     }
     await db.tickets.insert_one(doc)
-    await db.events.update_one({"id": event["id"]}, {"$inc": {"tickets_sold": qty}})
     if promoter_id and promoter_earning > 0:
         await db.users.update_one(
             {"id": promoter_id}, {"$inc": {"wallet_balance": promoter_earning}}
@@ -591,6 +687,10 @@ async def withdraw(
     )
     if res.modified_count == 0:
         raise HTTPException(400, "Insufficient balance")
+    await db.withdrawals.insert_one({
+        "id": str(uuid.uuid4()), "user_id": user["id"], "amount": body.amount,
+        "fee": fee, "net": net, "created_at": datetime.now(timezone.utc),
+    })
     return {"withdrawn": body.amount, "fee": fee, "net": net}
 
 
@@ -609,7 +709,8 @@ async def create_reservation(body: ReservationIn, user: Annotated[dict, Depends(
     res_date = body.date if body.date.tzinfo else body.date.replace(tzinfo=timezone.utc)
     if res_date < datetime.now(timezone.utc):
         raise HTTPException(400, "Reservation date must be in the future")
-    fee = round(body.base_price * PLATFORM_FEE_PCT, 2)
+    require_level(user, venue.get("min_level", "bronze"))
+    fee = round(body.base_price * LEVEL_BOOKING_FEE[user_level(user)], 2)
     total = round(body.base_price + fee, 2)
     doc = {
         "id": str(uuid.uuid4()),
@@ -639,7 +740,12 @@ async def my_reservations(user: Annotated[dict, Depends(current_user)]):
 
 # ---------- Routes mounting ----------
 
+from extras import router as extras_router  # noqa: E402
+from features import ensure_feature_indexes, router as features_router  # noqa: E402
+
 app.include_router(api)
+app.include_router(extras_router)
+app.include_router(features_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -655,6 +761,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 @app.on_event("startup")
 async def _startup():
     app.state.index_task = asyncio.create_task(ensure_indexes())
+    app.state.feature_index_task = asyncio.create_task(ensure_feature_indexes())
     # seed in background so boot is not blocked
     from seed import seed_all  # local
     app.state.seed_task = asyncio.create_task(seed_all(db))

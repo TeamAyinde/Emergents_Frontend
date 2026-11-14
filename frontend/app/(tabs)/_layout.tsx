@@ -38,8 +38,8 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="venues"
         options={{
-          title: "Venues",
-          tabBarIcon: ({ color, size }) => <FeatherIcon name="map-pin" color={color} size={size} />,
+          title: "Explore",
+          tabBarIcon: ({ color, size }) => <FeatherIcon name="compass" color={color} size={size} />,
         }}
       />
       <Tabs.Screen

@@ -1,0 +1,38 @@
+{
+  "summary": "Iteration 4: membership levels. Backend: new tests/test_nocturne_membership.py with 11 tests, all passing. Full suite 64/64 passing (pytest -n 0). Tests cover plans, upgrade 400s (unknown level, same level, business account), level in /auth/me, 403 '<Level> membership required' for gold/silver venue reservations, gold event tickets and gold partner bookings, success after upgrade, fees of 25/20/15%, ticket discounts of 10/20% with a 15% fee on the discounted base, simulated membership_payments (free_girl bronze = $0), partner categories, unknown category 400, more than 180 days 400, admin members_by_level and the CSV level column. Frontend at 375x667, all requested flows pass: sign-up tier step (6 testIDs; picking Gold gives a Gold profile badge); lock badges on home event cards, venue cards and luxe partner cards; locked gold event/venue/partner screens show unlock-*-btn and it goes to /membership; membership screen switch gold->silver updates CURRENT and membership-msg; partner detail shows Public rate, partner-savings and a tier-specific fee label (Bronze 25%, Silver 20%); silver event shows a discount row ($40 -> $41.40 is correct); compose saved twice sends POST then PUT, leaving 1 article with the edit applied (AI draft not called). Deprecated packages detected: none.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Membership change message", "issue": "After a downgrade (gold->silver or ->bronze) the message still says 'You're now Silver. Enjoy the upgrade.' Reference: /app/frontend/app/membership.tsx:32", "testID": "membership-msg", "priority": "LOW"},
+      {"component": "Profile level badge", "issue": "A free_girl user who paid for Gold or Silver is shown 'GOLD MEMBER · LADIES FREE'. That reads as if Gold is free. The perk label should only show at Bronze level, or say 'Ladies (Bronze free)'. Reference: /app/frontend/app/(tabs)/profile.tsx:90", "testID": "profile-level-badge", "priority": "LOW"}
+    ],
+    "integration_issues": [
+      {"flow": "Sign-up with Silver/Gold", "issue": "api.upgrade(level).catch(() => {}) swallows errors. If the upgrade fails, the user lands on Bronze with no feedback. Reference: /app/frontend/app/(auth)/sign-up.tsx:66", "affected_testIDs": ["signup-submit", "level-gold", "level-silver"]}
+    ],
+    "design_issues": [
+      {"screen": "Profile", "issues": ["Touch targets under 44pt: profile-level-badge is 214x25 and manage-membership-btn is 129x23. Add hitSlop or minHeight 44."]},
+      {"screen": "Partner detail", "issues": ["units-plus/units-minus can sit under the sticky footer on a 667px-tall screen. Content paddingBottom should be at least the sticky footer height so the controls can scroll clear of it."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_nocturne_membership.py", "/app/backend/tests/test_nocturne_api.py", "/app/backend/tests/test_nocturne_extras.py", "/app/test_reports/pytest/pytest_membership.xml"],
+  "action_items": [
+    "membership.tsx:32 - use 'upgrade' or 'downgrade' wording based on the level rank",
+    "profile.tsx:90 - show the free_girl/trial_male perk suffix only when level is bronze",
+    "sign-up.tsx:66 - don't silently swallow upgrade errors; tell the user if the paid tier was not applied",
+    "Add hitSlop or minHeight 44 to profile-level-badge and manage-membership-btn",
+    "server.py is 715 lines (over the 700 limit); move the auth/tickets/reservations routers into modules"
+  ],
+  "critical_code_review_comments": [
+    "Backend gating (require_level) is applied in all three booking paths, and fees use user_level. Admin/venue_owner are treated as gold. All correct.",
+    "event/[id].tsx calculates the fee on the unrounded discounted base while the backend rounds base first. A 1 cent display difference is possible for some prices.",
+    "Compose: after router.setParams({id}) the admin-articles query is enabled and its useEffect resets the form fields from the server copy. If an admin types during that refetch, the edits could be overwritten. Minor."
+  ],
+  "updated_files": ["/app/backend/tests/test_nocturne_membership.py (new)"],
+  "success_rate": {"backend": "100% (64/64)", "frontend": "100% of requested flows; 2 low-priority copy issues, 1 silent-error issue, touch-target issues"},
+  "seed_data_creation": "None. Only TEST_ users were created; they and their payments/tickets/reservations/bookings were deleted by id. Guest/promoter reset to bronze with wallet 0. An accidental guest Onyx Black Car partner booking (a force-click landed on partner-request-btn) was deleted. A leftover from a timed-out pytest run (2 test_*@example.com users and article 'TEST_ Pub') was deleted.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run pytest with -n 0 and a timeout over 60s (the full suite takes about 45s). If the shell timeout kills it, module teardown never runs and TEST data is left behind. Seeded gold items: venues Club Noire/The Golden Hour/The Vault; partners Malibu Modern Villa/Beverly Penthouse/Newport Superyacht/SkyLux Jets. Never call /api/admin/journal/draft. On partner detail, do not force-click units-plus at 375x667; it sits under the sticky request button.",
+  "rca_of_issue": ""
+}

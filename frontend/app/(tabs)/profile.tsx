@@ -6,6 +6,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   View,
 } from "react-native";
@@ -16,10 +17,11 @@ import { api } from "@/src/api";
 import { useAuth } from "@/src/auth-context";
 import { colors, radius, spacing } from "@/src/theme";
 import { LuxButton } from "@/src/ui";
+import { Level, LEVEL_INFO } from "@/src/levels";
 
 const TIER_LABELS: Record<string, string> = {
-  free_girl: "LADIES · FREE",
-  trial_male: "FREE TRIAL MONTH",
+  free_girl: "LADIES FREE",
+  trial_male: "1ST MONTH FREE",
   member: "MEMBER",
   premium: "PREMIUM",
   venue: "VENUE PARTNER",
@@ -33,6 +35,7 @@ export default function Profile() {
   const balance = user?.wallet_balance ?? 0;
   const canWithdraw = balance > 2;
   const isStaff = user?.role === "promoter" || user?.role === "venue_owner" || user?.role === "admin";
+  const lvl = (user?.level ?? "bronze") as Level;
   useFocusEffect(
     useCallback(() => {
       refresh();
@@ -43,6 +46,20 @@ export default function Profile() {
     queryKey: ["mine-reservations"],
     queryFn: () => api.myReservations(),
   });
+  const { data: luxe } = useQuery({ queryKey: ["mine-partner-bookings"], queryFn: () => api.myPartnerBookings() });
+  const { data: myTables } = useQuery({ queryKey: ["mine-tables"], queryFn: () => api.myTables() });
+  const { data: myReqs } = useQuery({ queryKey: ["mine-requests"], queryFn: () => api.myRequests() });
+  const pendingReqs = (myReqs ?? []).filter((r) => r.status !== "approved");
+  const [optBusy, setOptBusy] = useState(false);
+  async function toggleOptIn(v: boolean) {
+    setOptBusy(true);
+    try {
+      await api.updatePrefs(v);
+      await refresh();
+    } finally {
+      setOptBusy(false);
+    }
+  }
 
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   async function onWithdraw() {
@@ -71,9 +88,16 @@ export default function Profile() {
           </View>
           <Text style={styles.name} testID="profile-name">{user?.full_name}</Text>
           <Text style={styles.email}>{user?.email}</Text>
-          <View style={styles.tierBadge}>
-            <Text style={styles.tierText}>{TIER_LABELS[user?.membership_tier ?? ""] ?? user?.membership_tier?.toUpperCase()}</Text>
-          </View>
+          <Pressable testID="profile-level-badge" onPress={() => router.push("/membership")} style={[styles.tierBadge, { borderColor: LEVEL_INFO[lvl].color }]}>
+            <Text style={[styles.tierText, { color: LEVEL_INFO[lvl].color }]}>
+              {LEVEL_INFO[lvl].label.toUpperCase()} MEMBER{TIER_LABELS[user?.membership_tier ?? ""] && user?.membership_tier !== "member" && lvl === "bronze" ? ` · ${TIER_LABELS[user?.membership_tier ?? ""]}` : ""}
+            </Text>
+          </Pressable>
+          {user?.role === "guest" || user?.role === "promoter" ? (
+            <Pressable testID="manage-membership-btn" onPress={() => router.push("/membership")}>
+              <Text style={styles.upgradeLink}>{lvl === "gold" ? "Manage membership" : "Upgrade membership →"}</Text>
+            </Pressable>
+          ) : null}
         </View>
 
         {isStaff ? (
@@ -157,6 +181,103 @@ export default function Profile() {
           />
         </View>
 
+        <View>
+          <Text style={styles.sectionTitle}>Luxe Requests</Text>
+          {(luxe ?? []).length === 0 ? (
+            <Text style={styles.empty}>No hotel, car or yacht requests yet.</Text>
+          ) : (
+            (luxe ?? []).map((b) => (
+              <View key={b.id} style={styles.row} testID={`luxe-row-${b.id}`}>
+                <View style={styles.rowIcon}>
+                  <FeatherIcon name="star" size={16} color={colors.brandPrimary} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.rowTitle} numberOfLines={1}>{b.partner_name}</Text>
+                  <Text style={styles.rowSub}>
+                    {new Date(b.date).toLocaleDateString()} · ${b.total.toFixed(0)} · {b.status}
+                  </Text>
+                </View>
+              </View>
+            ))
+          )}
+        </View>
+
+        <View>
+          <Text style={styles.sectionTitle}>Tables & Requests</Text>
+          {(myTables ?? []).length === 0 && pendingReqs.length === 0 ? (
+            <Text style={styles.empty}>No table bookings or pending requests.</Text>
+          ) : null}
+          {(myTables ?? []).map((t) => (
+            <View key={t.id} style={styles.row} testID={`my-table-${t.id}`}>
+              <View style={styles.rowIcon}>
+                <FeatherIcon name="grid" size={16} color={colors.brandPrimary} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.rowTitle} numberOfLines={1}>{t.event_title} · {t.table_id}</Text>
+                <Text style={styles.rowSub}>{t.section} · party of {t.party_size} · ${t.total.toFixed(0)}</Text>
+              </View>
+            </View>
+          ))}
+          {pendingReqs.map((r) => (
+            <View key={r.id} style={styles.row} testID={`my-request-${r.id}`}>
+              <View style={styles.rowIcon}>
+                <FeatherIcon name="clock" size={16} color={colors.brandPrimary} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.rowTitle} numberOfLines={1}>{r.event_title}</Text>
+                <Text style={styles.rowSub}>
+                  {r.status === "declined" ? "Declined by host" : r.kind === "waitlist" ? "On the waitlist" : "Waiting for host approval"}
+                </Text>
+              </View>
+            </View>
+          ))}
+        </View>
+
+        <Pressable testID="concierge-btn" onPress={() => router.push("/concierge")} style={styles.prefRow}>
+          <View style={styles.rowIcon}>
+            <FeatherIcon name="message-circle" size={16} color={colors.brandPrimary} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowTitle}>Personal concierge</Text>
+            <Text style={styles.rowSub}>Jets, villas, tables, anything — just ask.</Text>
+          </View>
+          <FeatherIcon name="chevron-right" size={18} color={colors.muted} />
+        </Pressable>
+
+        {user?.role === "venue_owner" || user?.role === "admin" ? (
+          <Pressable testID="host-studio-btn" onPress={() => router.push("/host")} style={styles.prefRow}>
+            <View style={styles.rowIcon}>
+              <FeatherIcon name="calendar" size={16} color={colors.brandPrimary} />
+            </View>
+            <Text style={[styles.rowTitle, { flex: 1 }]}>Host Studio</Text>
+            <FeatherIcon name="chevron-right" size={18} color={colors.muted} />
+          </Pressable>
+        ) : null}
+
+        <View style={styles.prefRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowTitle}>Journal & member deals emails</Text>
+            <Text style={styles.rowSub}>Nightlife, travel and luxury news plus invites.</Text>
+          </View>
+          <Switch
+            testID="marketing-optin-switch"
+            value={!!user?.marketing_opt_in}
+            disabled={optBusy}
+            onValueChange={toggleOptIn}
+            trackColor={{ true: colors.brandPrimary, false: colors.surfaceTertiary }}
+          />
+        </View>
+
+        {user?.role === "admin" ? (
+          <Pressable testID="admin-dashboard-btn" onPress={() => router.push("/admin")} style={styles.prefRow}>
+            <View style={styles.rowIcon}>
+              <FeatherIcon name="bar-chart-2" size={16} color={colors.brandPrimary} />
+            </View>
+            <Text style={[styles.rowTitle, { flex: 1 }]}>Admin dashboard</Text>
+            <FeatherIcon name="chevron-right" size={18} color={colors.muted} />
+          </Pressable>
+        ) : null}
+
         <Pressable testID="logout-btn" onPress={signOut} style={styles.logout}>
           <FeatherIcon name="log-out" size={16} color={colors.brandSecondary} />
           <Text style={styles.logoutText}>Sign out</Text>
@@ -205,6 +326,11 @@ const styles = StyleSheet.create({
   checkedBadge: { backgroundColor: colors.surfaceTertiary },
   statusText: { color: colors.onBrandSecondary, fontSize: 10, letterSpacing: 1, fontWeight: "700" },
   sep: { height: 0.5, backgroundColor: colors.divider },
+  upgradeLink: { color: colors.brandPrimary, fontSize: 13, fontWeight: "700", paddingVertical: spacing.md, minHeight: 44 },
+  prefRow: {
+    flexDirection: "row", alignItems: "center", gap: spacing.md, backgroundColor: colors.surfaceSecondary,
+    borderRadius: radius.lg, padding: spacing.lg, borderWidth: 1, borderColor: colors.border,
+  },
   empty: { color: colors.muted, paddingVertical: spacing.md, textAlign: "center" },
   logout: {
     flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm,
