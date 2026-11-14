@@ -6,6 +6,7 @@ import FeatherIcon from "@react-native-vector-icons/feather";
 
 import { api, EventTable } from "./api";
 import { canAccess, Level, LEVEL_INFO } from "./levels";
+import { startCheckout } from "./payments";
 import { colors, radius, spacing } from "./theme";
 import { LuxButton } from "./ui";
 
@@ -19,11 +20,8 @@ export function TableMap({ eventId, userLevel }: { eventId: string; userLevel: L
   const [party, setParty] = useState(4);
   const { data: tables } = useQuery({ queryKey: ["tables", eventId], queryFn: () => api.eventTables(eventId) });
   const book = useMutation({
-    mutationFn: () => api.bookTable(eventId, sel!.id, party),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["tables", eventId] });
-      qc.invalidateQueries({ queryKey: ["mine-tables"] });
-    },
+    mutationFn: () => startCheckout({ kind: "table", event_id: eventId, table_id: sel!.id, party_size: party }, router),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["tables", eventId] }),
   });
 
   if (!tables || tables.length === 0) return null;
@@ -99,7 +97,6 @@ export function TableMap({ eventId, userLevel }: { eventId: string; userLevel: L
             <Text style={styles.cardTitle}>Deposit total</Text>
             <Text style={styles.cardTitle}>${(sel.min_spend + fee).toFixed(2)}</Text>
           </View>
-          {book.isSuccess ? <Text style={styles.ok} testID="table-booked-msg">Table {sel.name} is yours. See it in Profile.</Text> : null}
           {book.error ? <Text style={styles.err} testID="table-error">{book.error.message}</Text> : null}
           {locked ? (
             <LuxButton
@@ -107,9 +104,14 @@ export function TableMap({ eventId, userLevel }: { eventId: string; userLevel: L
               label={`${LEVEL_INFO[sel.min_level as Level].label} members only · Upgrade`}
               onPress={() => router.push("/membership")}
             />
-          ) : !book.isSuccess ? (
-            <LuxButton testID="table-book-btn" label={book.isPending ? "Booking…" : "Book this table"} onPress={() => book.mutate()} loading={book.isPending} />
-          ) : null}
+          ) : (
+            <LuxButton
+              testID="table-book-btn"
+              label={book.isPending ? "Opening checkout…" : `Pay deposit · $${(sel.min_spend + fee).toFixed(2)}`}
+              onPress={() => book.mutate()}
+              loading={book.isPending}
+            />
+          )}
         </View>
       ) : (
         <Text style={styles.muted}>Tap a table to see its minimum spend.</Text>

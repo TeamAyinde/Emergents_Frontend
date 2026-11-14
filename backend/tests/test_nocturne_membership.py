@@ -10,6 +10,8 @@ import requests
 from dotenv import load_dotenv
 from pymongo import MongoClient
 
+from conftest import grant_credit, set_level
+
 load_dotenv("/app/frontend/.env")
 load_dotenv("/app/backend/.env")
 BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL").rstrip("/")
@@ -52,6 +54,10 @@ def cleanup():
     for uid in CREATED["users"]:
         d.users.delete_one({"id": uid})
         d.membership_payments.delete_many({"user_id": uid})
+        d.points_ledger.delete_many({"user_id": uid})
+        d.perk_claims.delete_many({"user_id": uid})
+    d.venue_payables.delete_many({"record_id": {"$in": CREATED["tickets"] + CREATED["reservations"]}})
+    d.payment_transactions.delete_many({"user_id": {"$in": CREATED["users"]}})
     for tid in CREATED["tickets"]:
         d.tickets.delete_one({"id": tid})
     for rid in CREATED["reservations"]:
@@ -77,6 +83,25 @@ def pick(items, lvl):
     pytest.skip(f"no {lvl} item")
 
 
+def reserve(tok, venue_id, svc):
+    """Reservation via the credit path of /payments/checkout (direct POST /reservations is 402 by design)."""
+    r = requests.post(f"{API}/payments/checkout", headers=h(tok), json={
+        "kind": "reservation", "origin_url": BASE_URL, "venue_id": venue_id, "date": future(), "party_size": 2, "service_type": svc})
+    assert r.status_code == 200 and r.json()["paid_with_credit"], r.text
+    CREATED["reservations"].append(r.json()["result_id"])
+    return next(x for x in requests.get(f"{API}/reservations/mine", headers=h(tok)).json() if x["id"] == r.json()["result_id"])
+
+
+def pay_level(tok, uid, level, price):
+    """Upgrades are card-only: direct upgrade is 402, checkout gives a Stripe link; the card payment is simulated."""
+    r = requests.post(f"{API}/membership/upgrade", json={"level": level}, headers=h(tok))
+    assert r.status_code == 402, r.text
+    r = requests.post(f"{API}/payments/checkout", headers=h(tok), json={"kind": "membership", "origin_url": BASE_URL, "level": level})
+    assert r.status_code == 200 and r.json()["amount"] == price and r.json()["url"].startswith("https://"), r.text
+    requests.post(f"{API}/payments/cancel/{r.json()['session_id']}", headers=h(tok))
+    set_level(uid, level)
+
+
 # Plans
 def test_plans():
     r = requests.get(f"{API}/membership/plans")
@@ -96,6 +121,7 @@ def test_register_level_bronze():
     assert me["level"] == "bronze"
     S["tok"] = tok
     S["uid"] = u["id"]
+    grant_credit(u["id"], 20000)
 
 
 # Upgrade validation
@@ -139,11 +165,7 @@ def test_bronze_locked(catalog):
 def test_bronze_fee(catalog):
     venues = catalog[0]
     bv = pick(venues, "bronze")
-    r = requests.post(f"{API}/reservations", headers=h(S["tok"]), json={
-        "venue_id": bv["id"], "date": future(), "party_size": 2, "service_type": "table"})
-    assert r.status_code == 201, r.text
-    d = r.json()
-    CREATED["reservations"].append(d["id"])
+    d = reserve(S["tok"], bv["id"], "table")
     assert d["platform_fee"] == 50.0 and d["total"] == 250.0
 
 
@@ -151,17 +173,10 @@ def test_bronze_fee(catalog):
 def test_silver(catalog):
     venues, events, partners = catalog
     tok = S["tok"]
-    r = requests.post(f"{API}/membership/upgrade", json={"level": "silver"}, headers=h(tok))
-    assert r.status_code == 200 and r.json()["level"] == "silver"
+    pay_level(tok, S["uid"], "silver", 49.0)
     assert requests.get(f"{API}/auth/me", headers=h(tok)).json()["level"] == "silver"
-    pay = db().membership_payments.find_one({"user_id": S["uid"], "level": "silver"})
-    assert pay and pay["amount"] == 49.0 and pay["simulated"] is True
     sv = pick(venues, "silver")
-    r = requests.post(f"{API}/reservations", headers=h(tok), json={
-        "venue_id": sv["id"], "date": future(), "party_size": 2, "service_type": "booth"})
-    assert r.status_code == 201, r.text
-    d = r.json()
-    CREATED["reservations"].append(d["id"])
+    d = reserve(tok, sv["id"], "booth")
     assert d["platform_fee"] == 80.0 and d["total"] == 480.0
     se = pick(events, "silver")
     r = requests.post(f"{API}/tickets/purchase", headers=h(tok), json={"event_id": se["id"], "quantity": 2})
@@ -171,7 +186,7 @@ def test_silver(catalog):
     EV_SOLD[se["id"]] = EV_SOLD.get(se["id"], 0) + 2
     base = round(se["price"] * 2 * 0.9, 2)
     assert t["platform_fee"] == round(base * 0.15, 2)
-    assert t["total_paid"] == round(base + round(base * 0.15, 2), 2)
+    assert round(t["total_paid"] + t["credit_used"], 2) == round(base + round(base * 0.15, 2), 2)
     gp = pick(partners, "gold")
     r = requests.post(f"{API}/partner-bookings", headers=h(tok), json={
         "partner_id": gp["id"], "date": future(), "units": 1, "guests": 2})
@@ -182,14 +197,9 @@ def test_silver(catalog):
 def test_gold(catalog):
     venues, events, partners = catalog
     tok = S["tok"]
-    r = requests.post(f"{API}/membership/upgrade", json={"level": "gold"}, headers=h(tok))
-    assert r.status_code == 200 and r.json()["level"] == "gold"
+    pay_level(tok, S["uid"], "gold", 149.0)
     gv, ge, gp = pick(venues, "gold"), pick(events, "gold"), pick(partners, "gold")
-    r = requests.post(f"{API}/reservations", headers=h(tok), json={
-        "venue_id": gv["id"], "date": future(), "party_size": 2, "service_type": "bottle"})
-    assert r.status_code == 201, r.text
-    CREATED["reservations"].append(r.json()["id"])
-    assert r.json()["platform_fee"] == 120.0
+    assert reserve(tok, gv["id"], "bottle")["platform_fee"] == 120.0
     r = requests.post(f"{API}/tickets/purchase", headers=h(tok), json={"event_id": ge["id"], "quantity": 1})
     assert r.status_code == 201, r.text
     t = r.json()
@@ -242,7 +252,8 @@ def test_partner_180_days(catalog):
 def test_admin_overview_and_csv():
     at = requests.post(f"{API}/auth/login", json={"email": ADMIN[0], "password": ADMIN[1]}).json()["access_token"]
     tok2, u2 = register("trial_male")
-    requests.post(f"{API}/membership/upgrade", json={"level": "silver"}, headers=h(tok2))
+    assert requests.post(f"{API}/membership/upgrade", json={"level": "silver"}, headers=h(tok2)).status_code == 402
+    set_level(u2["id"], "silver")  # simulated paid Stripe upgrade
     ov = requests.get(f"{API}/admin/overview", headers=h(at))
     assert ov.status_code == 200
     mbl = ov.json()["members_by_level"]

@@ -67,6 +67,7 @@ export default function RootLayout() {
                     <Stack.Screen name="venue/[id]" options={{ animation: "slide_from_right" }} />
                     <Stack.Screen name="ticket/[id]" options={{ animation: "slide_from_bottom", presentation: "modal" }} />
                     <Stack.Screen name="checkin" options={{ animation: "slide_from_bottom", presentation: "modal" }} />
+                    <Stack.Screen name="payment-result" options={{ animation: "fade", gestureEnabled: false }} />
                   </Stack>
                 </AuthGate>
               </AuthProvider>

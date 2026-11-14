@@ -105,6 +105,11 @@ export default function AdminDashboard() {
             <Text style={[styles.rowTitle, { flex: 1 }]}>Concierge inbox</Text>
             <FeatherIcon name="chevron-right" size={18} color={colors.muted} />
           </Pressable>
+          <Pressable testID="admin-payouts-btn" onPress={() => router.push("/admin/payouts")} style={styles.listRow}>
+            <FeatherIcon name="credit-card" size={18} color={colors.brandPrimary} />
+            <Text style={[styles.rowTitle, { flex: 1 }]}>Payouts · venues & promoters</Text>
+            <FeatherIcon name="chevron-right" size={18} color={colors.muted} />
+          </Pressable>
           <Pressable testID="admin-host-btn" onPress={() => router.push("/host")} style={styles.listRow}>
             <FeatherIcon name="calendar" size={18} color={colors.brandPrimary} />
             <Text style={[styles.rowTitle, { flex: 1 }]}>All events · Host Studio</Text>

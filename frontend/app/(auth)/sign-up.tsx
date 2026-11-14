@@ -15,8 +15,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/src/auth-context";
 import { LuxButton } from "@/src/ui";
 import { colors, radius, spacing } from "@/src/theme";
-import { api } from "@/src/api";
 import type { User } from "@/src/api";
+import { startCheckout } from "@/src/payments";
 import { Level, LEVEL_INFO } from "@/src/levels";
 
 type Role = User["role"];
@@ -36,7 +36,7 @@ const LEVELS: Level[] = ["bronze", "silver", "gold"];
 export default function SignUp() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { signUp, refresh } = useAuth();
+  const { signUp } = useAuth();
   const [step, setStep] = useState<"role" | "tier" | "form">("role");
   const [role, setRole] = useState<Exclude<Role, "admin">>("guest");
   const [tier, setTier] = useState("trial_male");
@@ -65,12 +65,11 @@ export default function SignUp() {
       });
       if (role !== "venue_owner" && level !== "bronze") {
         try {
-          await api.upgrade(level);
-          await refresh();
+          await startCheckout({ kind: "membership", level }, router);
         } catch {
           router.replace("/membership");
-          return;
         }
+        return;
       }
       router.replace("/(tabs)");
     } catch (e) {

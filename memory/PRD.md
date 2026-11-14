@@ -45,3 +45,22 @@ Money-making hospitality app (founder has construction/club/nightlife/lounge/res
 - P0: Google / Apple / phone sign-in
 - P1: Camera QR scanning for check-in; reward points; members perks wallet; event photo albums
 - P2: Real California business directory import; event planner / corporate packages
+
+## Iteration 6 — Rewards, Perks, Camera check-in
+- Reward points: 1 pt per $1 (Silver 1.5×, Gold 2×) on tickets, tables, reservations, confirmed luxe bookings; redeem 100 pts = $5 credit, auto-applied to tickets
+- Members perks wallet: 9 partner perks gated by tier; claim reveals code
+- Camera QR scanning on /checkin (expo-camera, pre-permission screen, Open Settings when blocked, manual fallback)
+- Event page shows "You're going · View ticket" when the member already has a ticket
+
+## Still to do (needs user setup)
+- Stripe real payments (tickets, tables, luxe, memberships) + Stripe Connect promoter payouts — needs the user's Stripe account
+- Google login (Emergent managed) and Apple login (needs Apple Developer account + native build)
+
+## Iteration 7 — Real payments (Stripe test mode), Google sign-in, payouts
+- Stripe Checkout (hosted page; works on web + Expo Go) for tickets, table deposits, venue reservations, membership upgrades (30 days). Server-side pricing, webhook + status polling, idempotent fulfilment
+- Marketplace money flow: guest pays Nocturne → Nocturne keeps fees, logs venue share in `venue_payables`, promoter commission in wallet
+- Reward credit reserved at checkout, refunded on cancel/expiry/failure; one open checkout per item; paid-but-unfulfillable flagged `needs_refund`
+- Direct paid endpoints return 402; paid approval events: host approves → guest pays → ticket
+- Admin Payouts screen (venues owed, pending promoter withdrawals, mark paid); host `/api/host/payouts`
+- Emergent-managed Google sign-in (welcome + sign-in) alongside email/password; issues the same JWT
+- Backlog: Stripe Connect automatic bank payouts (needs the owner's own Stripe account with Connect), recurring membership billing, Apple sign-in (native build)

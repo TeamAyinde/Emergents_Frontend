@@ -21,6 +21,7 @@ import { LuxButton } from "@/src/ui";
 import { useAuth } from "@/src/auth-context";
 import { canAccess, Level, LEVEL_INFO } from "@/src/levels";
 import { TableMap } from "@/src/table-map";
+import { startCheckout } from "@/src/payments";
 
 export default function EventDetails() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -29,20 +30,31 @@ export default function EventDetails() {
   const qc = useQueryClient();
   const [qty, setQty] = useState(1);
   const [code, setCode] = useState("");
-  const { user } = useAuth();
+  const { user, refresh } = useAuth();
   const lvl = (user?.level ?? "bronze") as Level;
 
   const { data: ev, isLoading } = useQuery({ queryKey: ["event", id], queryFn: () => api.getEvent(id!) });
   const { data: guests } = useQuery({ queryKey: ["guests", id], queryFn: () => api.eventGuests(id!) });
   const { data: myReqs } = useQuery({ queryKey: ["mine-requests"], queryFn: () => api.myRequests() });
+  const { data: myTickets } = useQuery({ queryKey: ["mine-tickets"], queryFn: () => api.myTickets() });
+  const myTicket = myTickets?.find((t) => t.event_id === id);
   const pendingReq = myReqs?.find((r) => r.event_id === id && r.status === "pending");
+  const approvedReq = myReqs?.find((r) => r.event_id === id && r.status === "approved");
   const buy = useMutation({
-    mutationFn: () => api.joinEvent(id!, { promoter_code: code.trim() || undefined, quantity: qty }),
+    mutationFn: async () => {
+      const promoter_code = code.trim() || undefined;
+      const res = await api.joinEvent(id!, { promoter_code, quantity: qty });
+      if (res.result === "payment_required") {
+        await startCheckout({ kind: "ticket", event_id: id!, quantity: qty, promoter_code }, router);
+      }
+      return res;
+    },
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ["mine-tickets"] });
       qc.invalidateQueries({ queryKey: ["mine-requests"] });
       qc.invalidateQueries({ queryKey: ["events"] });
       qc.invalidateQueries({ queryKey: ["guests", id] });
+      refresh();
       if (res.result === "ticket" && res.ticket) router.replace(`/ticket/${res.ticket.id}`);
     },
   });
@@ -62,10 +74,15 @@ export default function EventDetails() {
   const locked = !canAccess(lvl, ev.min_level);
   const total = base + fee;
   const d = new Date(ev.date);
+  const credit = Math.min(user?.credit_balance ?? 0, total);
   const maxQty = Math.min(8, 1 + (ev.plus_one_limit ?? 7));
   const left = Math.max(0, (ev.capacity ?? 200) - ev.tickets_sold);
   const soldOut = left < qty;
-  const joinLabel = ev.approval_required ? "Request to join" : soldOut ? "Join waitlist" : `Buy ticket · $${total.toFixed(2)}`;
+  const due = total - credit;
+  const payLabel = due > 0 ? `Pay $${due.toFixed(2)} · Card` : "Get ticket";
+  const joinLabel = approvedReq
+    ? `Approved · ${payLabel}`
+    : ev.approval_required ? "Request to join" : soldOut ? "Join waitlist" : payLabel;
   const outcome = buy.data?.result === "pending" || (pendingReq && pendingReq.kind === "approval")
     ? "Request sent. The host will approve you soon — your ticket appears in Profile."
     : buy.data?.result === "waitlisted" || (pendingReq && pendingReq.kind === "waitlist")
@@ -74,7 +91,7 @@ export default function EventDetails() {
 
   return (
     <View style={styles.root}>
-      <ScrollView contentContainerStyle={{ paddingBottom: 200 }}>
+      <ScrollView contentContainerStyle={{ paddingBottom: 280 }}>
         <View style={styles.hero}>
           <Image source={ev.image_url} style={StyleSheet.absoluteFill} contentFit="cover" />
           <LinearGradient
@@ -159,8 +176,13 @@ export default function EventDetails() {
             <Row label="Tickets" value={`$${gross.toFixed(2)}`} />
             {discount > 0 ? <Row label={`${LEVEL_INFO[lvl].label} discount`} value={`−$${discount.toFixed(2)}`} /> : null}
             <Row label="Platform fee (15%)" value={`$${fee.toFixed(2)}`} />
+            {credit > 0 ? <Row label="Reward credit" value={`−$${credit.toFixed(2)}`} /> : null}
             <View style={styles.sep} />
-            <Row label="Total" value={`$${total.toFixed(2)}`} bold />
+            <Row label="Total" value={`$${(total - credit).toFixed(2)}`} bold />
+            <Text style={styles.pointsHint} testID="points-hint">
+              Earn {Math.round((total - credit) * ({ bronze: 1, silver: 1.5, gold: 2 } as const)[lvl])} reward points
+            </Text>
+            <Text style={styles.secureHint}>Secure card payment by Stripe</Text>
           </View>
         </View>
       </ScrollView>
@@ -178,6 +200,8 @@ export default function EventDetails() {
             label={`Unlock with ${LEVEL_INFO[ev.min_level as Level].label}`}
             onPress={() => router.push("/membership")}
           />
+        ) : myTicket ? (
+          <LuxButton testID="view-my-ticket-btn" label="You're going · View ticket" onPress={() => router.push(`/ticket/${myTicket.id}`)} />
         ) : outcome ? null : (
           <LuxButton
             testID="buy-ticket-btn"
@@ -217,6 +241,8 @@ const styles = StyleSheet.create({
   },
   avatarText: { color: colors.brandPrimary, fontSize: 13, fontWeight: "800" },
   guestsText: { color: colors.onSurfaceSecondary, fontSize: 13, flex: 1 },
+  pointsHint: { color: colors.brandPrimary, fontSize: 12, fontWeight: "700", marginTop: spacing.xs },
+  secureHint: { color: colors.muted, fontSize: 11 },
   root: { flex: 1, backgroundColor: colors.surface },
   center: { alignItems: "center", justifyContent: "center" },
   hero: { height: 420 },

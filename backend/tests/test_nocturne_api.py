@@ -9,6 +9,8 @@ import requests
 from dotenv import load_dotenv
 from pymongo import MongoClient
 
+from conftest import grant_credit
+
 load_dotenv("/app/frontend/.env")
 load_dotenv("/app/backend/.env")
 BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL").rstrip("/")
@@ -19,7 +21,7 @@ PROMOTER = ("promoter@nocturne.app", "PromoterPass123!")
 VENUE = ("venue@nocturne.app", "VenuePass123!")
 ADMIN = ("admin@nocturne.app", "AdminPass123!")
 
-CREATED = {"users": [], "events": [], "tickets": [], "reservations": [], "withdrawal_users": []}
+CREATED = {"users": [], "events": [], "tickets": [], "reservations": [], "withdrawal_users": [], "sessions": []}
 WALLET_DELTA = {"promoter": 0.0}
 
 
@@ -46,6 +48,9 @@ def cleanup():
         db.events.update_one({"id": t["event_id"]}, {"$inc": {"tickets_sold": -t["quantity"]}})
     db.tickets.delete_many({"id": {"$in": CREATED["tickets"]}})
     db.reservations.delete_many({"id": {"$in": CREATED["reservations"]}})
+    db.venue_payables.delete_many({"record_id": {"$in": CREATED["reservations"] + CREATED["tickets"]}})
+    db.payment_transactions.delete_many({"session_id": {"$in": CREATED["sessions"]}})
+    db.points_ledger.delete_many({"user_id": {"$in": CREATED["users"]}})
     db.events.delete_many({"id": {"$in": CREATED["events"]}})
     db.users.delete_many({"id": {"$in": CREATED["users"]}})
     # withdrawals are now recorded (iteration 3): remove the ones this run created
@@ -58,6 +63,15 @@ def cleanup():
 @pytest.fixture(scope="module")
 def guest():
     return login(GUEST)
+
+
+@pytest.fixture(scope="module")
+def buyer():
+    """TEST_ guest whose reward credit covers purchases (direct paid endpoints are 402 without credit)."""
+    r = register()
+    assert r.status_code == 201, r.text
+    grant_credit(r.json()["user"]["id"], 20000)
+    return r.json()
 
 
 @pytest.fixture(scope="module")
@@ -159,26 +173,26 @@ class TestCatalog:
 
 # --- Tickets ---
 class TestTickets:
-    def test_purchase_with_marco1(self, guest, promoter, event):
+    def test_purchase_with_marco1(self, buyer, promoter, event):
         before = requests.get(f"{API}/auth/me", headers=h(promoter["access_token"])).json()["wallet_balance"]
-        r = buy(guest["access_token"], event["id"], 2, "marco1")
+        r = buy(buyer["access_token"], event["id"], 2, "marco1")
         assert r.status_code == 201, r.text
         t = r.json()
         base = event["price"] * 2
         assert t["platform_fee"] == pytest.approx(round(base * 0.15, 2), abs=0.01)
-        assert t["total_paid"] == pytest.approx(round(base * 1.15, 2), abs=0.01)
+        assert t["total_paid"] + t["credit_used"] == pytest.approx(round(base * 1.15, 2), abs=0.01)
         assert t["promoter_earning"] == pytest.approx(round(t["platform_fee"] * 0.4, 2), abs=0.01)
         assert t["promoter_id"] == promoter["user"]["id"]
         WALLET_DELTA["promoter"] += t["promoter_earning"]
         after = requests.get(f"{API}/auth/me", headers=h(promoter["access_token"])).json()["wallet_balance"]
         assert after == pytest.approx(before + t["promoter_earning"], abs=0.02)
-        assert any(x["id"] == t["id"] for x in requests.get(f"{API}/tickets/mine", headers=h(guest["access_token"])).json())
+        assert any(x["id"] == t["id"] for x in requests.get(f"{API}/tickets/mine", headers=h(buyer["access_token"])).json())
 
-    def test_quantity_bounds(self, guest, event):
+    def test_quantity_bounds(self, buyer, event):
         # seeded events have plus_one_limit 3 -> max 4 per guest; 8 is now rejected by design
         for q in [0, -1, 9, 100, 8, 5]:
-            assert buy(guest["access_token"], event["id"], q).status_code == 400, q
-        assert buy(guest["access_token"], event["id"], 4).status_code == 201
+            assert buy(buyer["access_token"], event["id"], q).status_code == 400, q
+        assert buy(buyer["access_token"], event["id"], 4).status_code == 201
 
     def test_past_event_rejected(self, guest, venue_owner):
         vid = bronze_venue_id()
@@ -188,9 +202,14 @@ class TestTickets:
         assert r.status_code == 400, r.text
         assert buy(guest["access_token"], "nope").status_code == 404
 
-    def test_self_referral_no_earnings(self, promoter, event):
+    def test_self_referral_no_earnings(self, event):
+        # TEST_ promoter (with credit) buys with its own code
+        reg = register("promoter")
+        assert reg.status_code == 201, reg.text
+        promoter, code = reg.json(), reg.json()["user"]["referral_code"]
+        grant_credit(promoter["user"]["id"], 1000)
         before = requests.get(f"{API}/auth/me", headers=h(promoter["access_token"])).json()["wallet_balance"]
-        r = buy(promoter["access_token"], event["id"], 1, "MARCO1")
+        r = buy(promoter["access_token"], event["id"], 1, code)
         assert r.status_code == 201, r.text
         assert r.json()["promoter_id"] is None and r.json()["promoter_earning"] == 0
         after = requests.get(f"{API}/auth/me", headers=h(promoter["access_token"])).json()["wallet_balance"]
@@ -205,17 +224,17 @@ class TestTickets:
         if bal >= 3:
             CREATED["withdrawal_users"].append((promoter["user"]["id"], datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=5)))
             r = requests.post(f"{API}/promoter/withdraw", json={"amount": 3}, headers=h(tok))
-            assert r.status_code == 200 and r.json() == {"withdrawn": 3, "fee": 2.0, "net": 1.0}
+            assert r.status_code == 200 and r.json() == {"withdrawn": 3, "fee": 2.0, "net": 1.0, "status": "pending"}
             WALLET_DELTA["promoter"] -= 3
             assert requests.get(f"{API}/auth/me", headers=h(tok)).json()["wallet_balance"] == pytest.approx(bal - 3, abs=0.01)
 
 
 # --- Check-in ---
 class TestCheckin:
-    def test_short_code_checkin(self, guest, promoter, event):
-        t = buy(guest["access_token"], event["id"]).json()
+    def test_short_code_checkin(self, buyer, promoter, event):
+        t = buy(buyer["access_token"], event["id"]).json()
         short = "#" + t["id"][:8].upper()
-        assert requests.post(f"{API}/tickets/{t['id']}/checkin", headers=h(guest["access_token"])).status_code == 403
+        assert requests.post(f"{API}/tickets/{t['id']}/checkin", headers=h(buyer["access_token"])).status_code == 403
         c = requests.post(f"{API}/tickets/{short}/checkin", headers=h(promoter["access_token"]))
         # NOTE: '#' in a URL path is a fragment; clients must URL-encode it. Test raw short code too.
         if c.status_code != 200:
@@ -226,11 +245,11 @@ class TestCheckin:
         again = requests.post(f"{API}/tickets/{t['id'][:8].lower()}/checkin", headers=h(promoter["access_token"]))
         assert again.status_code == 400
 
-    def test_full_id_checkin_and_double(self, guest, promoter, event):
-        t = buy(guest["access_token"], event["id"]).json()
+    def test_full_id_checkin_and_double(self, buyer, promoter, event):
+        t = buy(buyer["access_token"], event["id"]).json()
         assert requests.post(f"{API}/tickets/{t['id']}/checkin", headers=h(promoter["access_token"])).status_code == 200
         assert requests.post(f"{API}/tickets/{t['id']}/checkin", headers=h(promoter["access_token"])).status_code == 400
-        mine = [x for x in requests.get(f"{API}/tickets/mine", headers=h(guest["access_token"])).json() if x["id"] == t["id"]]
+        mine = [x for x in requests.get(f"{API}/tickets/mine", headers=h(buyer["access_token"])).json() if x["id"] == t["id"]]
         assert mine[0]["checked_in"] is True
 
     def test_unknown_or_too_short(self, promoter):
@@ -259,15 +278,20 @@ class TestPromoter:
 # --- Reservations ---
 class TestReservations:
     @pytest.mark.parametrize("svc,price", [("table", 200.0), ("booth", 400.0), ("bottle", 800.0)])
-    def test_server_side_price(self, guest, svc, price):
+    def test_server_side_price(self, buyer, svc, price):
         vid = bronze_venue_id()
         body = {"venue_id": vid, "date": future(), "party_size": 4, "service_type": svc, "base_price": 1, "notes": "TEST_res"}
-        r = requests.post(f"{API}/reservations", json=body, headers=h(guest["access_token"]))
-        assert r.status_code == 201, r.text
-        d = r.json()
-        CREATED["reservations"].append(d["id"])
+        # direct endpoint is 402 even with credit; the credit path of checkout books it
+        assert requests.post(f"{API}/reservations", json=body, headers=h(buyer["access_token"])).status_code == 402
+        body.pop("base_price")
+        r = requests.post(f"{API}/payments/checkout", json={**body, "kind": "reservation", "origin_url": BASE_URL},
+                          headers=h(buyer["access_token"]))
+        assert r.status_code == 200 and r.json()["paid_with_credit"] is True, r.text
+        CREATED["reservations"].append(r.json()["result_id"])
+        CREATED["sessions"].append(r.json()["session_id"])
+        d = next(x for x in requests.get(f"{API}/reservations/mine", headers=h(buyer["access_token"])).json()
+                 if x["id"] == r.json()["result_id"])
         assert d["base_price"] == price and d["platform_fee"] == round(price * 0.25, 2) and d["total"] == round(price * 1.25, 2)  # bronze 25% concierge fee
-        assert any(x["id"] == d["id"] for x in requests.get(f"{API}/reservations/mine", headers=h(guest["access_token"])).json())
 
     def test_validation(self, guest):
         vid = bronze_venue_id()
@@ -284,7 +308,5 @@ class TestReservations:
         vid = bronze_venue_id()
         r = requests.post(f"{API}/reservations", json={"venue_id": vid, "date": future(), "party_size": 2, "service_type": "table"},
                           headers=h(guest["access_token"]))
-        if r.status_code == 201:
-            CREATED["reservations"].append(r.json()["id"])
-        print("no base_price status:", r.status_code)
-        assert r.status_code == 201
+        # validated (not 422) and priced server-side -> payment required
+        assert r.status_code == 402, r.text

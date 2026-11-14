@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useAuth } from "@/src/auth-context";
 import { LuxButton } from "@/src/ui";
+import { GoogleButton, OrDivider } from "@/src/google-button";
 import { colors, radius, spacing } from "@/src/theme";
 
 export default function SignIn() {
@@ -57,6 +58,8 @@ export default function SignIn() {
         <Text style={styles.subtitle}>Sign in to continue your night.</Text>
 
         <View style={styles.form}>
+          <GoogleButton />
+          <OrDivider />
           <Field label="Email" testID="signin-email" value={email} onChangeText={setEmail} keyboardType="email-address" />
           <Field label="Password" testID="signin-password" value={password} onChangeText={setPassword} secureTextEntry />
           {err ? <Text style={styles.err} testID="signin-error">{err}</Text> : null}

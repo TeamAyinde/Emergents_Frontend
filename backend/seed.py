@@ -288,7 +288,28 @@ async def _apply_host_features(db):
     await db.events.update_many({"title": "Rooftop Reverie", "capacity": 150}, {"$set": {"capacity": 2}})
 
 
+PERKS = [
+    ("Velvet Sky Rooftop", "Complimentary welcome cocktail", "One signature cocktail on arrival, any night.", "drinks", "bronze", "NOCWELCOME", "photo-1514933651103-005eec06c04b"),
+    ("Onyx Black Car", "15% off airport transfers", "LAX, BUR and SNA runs in an Escalade or S-Class.", "transport", "bronze", "ONYX15", "photo-1563720223185-11003d516935"),
+    ("Harbor House", "Chef's tasting for 2 at 25% off", "Seven-course coastal tasting menu, Sunday to Thursday.", "dining", "bronze", "HARBOR25", "photo-1414235077428-338989a2e8c0"),
+    ("Mirage Lounge", "Skip the line + free entry before 11pm", "Show your code at the door.", "nightlife", "silver", "MIRAGEVIP", "photo-1630395822970-acd6a691d97e"),
+    ("The Sunset Grand", "Suite upgrade + late checkout", "Subject to availability, any weekend stay.", "hotels", "silver", "SUNSETUP", "photo-1582719508461-905c673771fd"),
+    ("Apex Exotic Rentals", "$300 off your first exotic rental", "Lamborghini, Ferrari or Rolls-Royce, 24h minimum.", "cars", "silver", "APEX300", "photo-1544636331-e26879cd4d9b"),
+    ("Club Noire", "Complimentary bottle with any VIP table", "One premium bottle on the house.", "nightlife", "gold", "NOIREGOLD", "photo-1545128485-c400e7702796"),
+    ("SkyLux Private Jets", "Free empty-leg upgrade", "First access to empty legs at 50% off.", "travel", "gold", "SKYLUXGOLD", "photo-1540962351504-03099e0a754b"),
+    ("Newport Superyacht Club", "Free extra hour on any charter", "Plus champagne service for your group.", "yachts", "gold", "YACHTHOUR", "photo-1605281317010-fe5ffe798166"),
+]
+
+
+async def _seed_perks(db):
+    for (partner, title, desc, cat, lvl, code, img) in PERKS:
+        await db.perks.update_one({"code": code}, {"$set": {
+            "partner_name": partner, "title": title, "description": desc, "category": cat, "min_level": lvl,
+            "image_url": U + img + "?w=900&q=80"}, "$setOnInsert": {"id": str(uuid.uuid4()), "code": code}}, upsert=True)
+
+
 async def seed_all(db):
+    await _seed_perks(db)
     await _seed_partners_and_articles(db)
     await _seed_core(db)
     await _apply_levels(db)

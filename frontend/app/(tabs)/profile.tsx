@@ -66,7 +66,7 @@ export default function Profile() {
     try {
       const res = await api.withdraw(user?.wallet_balance ?? 0);
       await refresh();
-      setMsg({ ok: true, text: `Sent $${res.net.toFixed(2)} (fee $${res.fee.toFixed(2)}) to your bank.` });
+      setMsg({ ok: true, text: `Payout of $${res.net.toFixed(2)} requested (fee $${res.fee.toFixed(2)}). It reaches your bank within 1–3 business days.` });
     } catch (e) {
       setMsg({ ok: false, text: e instanceof Error ? e.message : "Try again" });
     }
@@ -233,6 +233,19 @@ export default function Profile() {
           ))}
         </View>
 
+        <View style={styles.rewardsRow}>
+          <Pressable testID="rewards-btn" onPress={() => router.push("/rewards")} style={styles.rewardsCard}>
+            <FeatherIcon name="star" size={18} color={colors.brandPrimary} />
+            <Text style={styles.rewardsValue} testID="profile-points">{user?.points ?? 0}</Text>
+            <Text style={styles.rowSub}>Reward points{(user?.credit_balance ?? 0) > 0 ? ` · $${user?.credit_balance.toFixed(2)} credit` : ""}</Text>
+          </Pressable>
+          <Pressable testID="perks-btn" onPress={() => router.push("/perks")} style={styles.rewardsCard}>
+            <FeatherIcon name="gift" size={18} color={colors.brandPrimary} />
+            <Text style={styles.rewardsValue}>Perks</Text>
+            <Text style={styles.rowSub}>Members wallet</Text>
+          </Pressable>
+        </View>
+
         <Pressable testID="concierge-btn" onPress={() => router.push("/concierge")} style={styles.prefRow}>
           <View style={styles.rowIcon}>
             <FeatherIcon name="message-circle" size={16} color={colors.brandPrimary} />
@@ -326,6 +339,12 @@ const styles = StyleSheet.create({
   checkedBadge: { backgroundColor: colors.surfaceTertiary },
   statusText: { color: colors.onBrandSecondary, fontSize: 10, letterSpacing: 1, fontWeight: "700" },
   sep: { height: 0.5, backgroundColor: colors.divider },
+  rewardsRow: { flexDirection: "row", gap: spacing.md },
+  rewardsCard: {
+    flex: 1, backgroundColor: colors.surfaceSecondary, borderRadius: radius.lg, padding: spacing.lg, gap: 4,
+    borderWidth: 1, borderColor: colors.brandPrimary,
+  },
+  rewardsValue: { color: colors.onSurface, fontSize: 22, fontWeight: "800" },
   upgradeLink: { color: colors.brandPrimary, fontSize: 13, fontWeight: "700", paddingVertical: spacing.md, minHeight: 44 },
   prefRow: {
     flexDirection: "row", alignItems: "center", gap: spacing.md, backgroundColor: colors.surfaceSecondary,

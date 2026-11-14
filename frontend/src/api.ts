@@ -47,6 +47,8 @@ export type User = {
   wallet_balance: number;
   marketing_opt_in: boolean;
   level: "bronze" | "silver" | "gold";
+  points: number;
+  credit_balance: number;
   phone?: string | null;
   city?: string | null;
 };
@@ -173,6 +175,22 @@ export const api = {
       body: JSON.stringify({ email, password }),
     }),
   me: () => request<User>("/auth/me"),
+  googleSession: (session_id: string) =>
+    request<{ access_token: string; user: User }>("/auth/session", {
+      method: "POST",
+      body: JSON.stringify({ session_id }),
+    }),
+
+  checkout: (body: CheckoutBody & { origin_url: string; return_url?: string }) =>
+    request<CheckoutResult>("/payments/checkout", { method: "POST", body: JSON.stringify(body) }),
+  paymentStatus: (sessionId: string) => request<PaymentStatus>(`/payments/status/${encodeURIComponent(sessionId)}`),
+  cancelPayment: (sessionId: string) =>
+    request<{ ok: boolean }>(`/payments/cancel/${encodeURIComponent(sessionId)}`, { method: "POST" }),
+  adminPayouts: () => request<AdminPayouts>("/admin/payouts"),
+  settleVenue: (venueId: string) =>
+    request<{ settled: number }>(`/admin/payouts/venues/${venueId}/settle`, { method: "POST" }),
+  markWithdrawalPaid: (id: string) => request<{ ok: boolean }>(`/admin/withdrawals/${id}/paid`, { method: "POST" }),
+  hostPayouts: () => request<{ owed: number; paid: number }>("/host/payouts"),
 
   listEvents: () => request<EventItem[]>("/events?upcoming=true"),
   getEvent: (id: string) => request<EventItem>(`/events/${id}`),
@@ -211,13 +229,18 @@ export const api = {
   promoterStats: () => request<PromoterStats>("/promoter/stats"),
   leaderboard: () => request<LeaderboardEntry[]>("/promoter/leaderboard"),
   withdraw: (amount: number) =>
-    request<{ withdrawn: number; fee: number; net: number }>(
+    request<{ withdrawn: number; fee: number; net: number; status: string }>(
       "/promoter/withdraw",
       { method: "POST", body: JSON.stringify({ amount }) },
     ),
 
   upgrade: (level: string) =>
     request<User>("/membership/upgrade", { method: "POST", body: JSON.stringify({ level }) }),
+
+  rewards: () => request<Rewards>("/rewards"),
+  redeem: (points: number) => request<Rewards>("/rewards/redeem", { method: "POST", body: JSON.stringify({ points }) }),
+  perks: () => request<Perk[]>("/perks"),
+  claimPerk: (id: string) => request<Perk>(`/perks/${id}/claim`, { method: "POST" }),
 
   conciergeMessages: () => request<ChatMessage[]>("/concierge/messages"),
   conciergeUnread: () => request<{ unread: number }>("/concierge/unread"),
@@ -297,6 +320,22 @@ export const api = {
   },
 };
 
+export type CheckoutBody =
+  | { kind: "ticket"; event_id: string; quantity: number; promoter_code?: string }
+  | { kind: "table"; event_id: string; table_id: string; party_size: number }
+  | { kind: "reservation"; venue_id: string; date: string; party_size: number; service_type: string; notes?: string }
+  | { kind: "membership"; level: string };
+export type CheckoutResult = { url: string | null; session_id: string; amount: number; paid_with_credit: boolean; result_id: string | null };
+export type PaymentStatus = {
+  session_id: string; kind: CheckoutBody["kind"]; label: string; amount: number;
+  status: "pending" | "paid" | "cancelled" | "expired" | "failed"; result_id: string | null; error: string | null;
+};
+export type AdminPayouts = {
+  card_payments_total: number; venues_owed_total: number; refunds_needed: number;
+  venues: { venue_id: string; venue_name: string; owed: number; items: number }[];
+  withdrawals: { id: string; user_id: string; user_name: string; amount: number; fee: number; net: number; status: string; created_at: string }[];
+};
+
 export type Partner = {
   id: string;
   name: string;
@@ -360,6 +399,14 @@ export type AdminOverview = {
   revenue_total: number;
 };
 
+export type Rewards = {
+  points: number; credit_balance: number; multiplier: number; points_per_dollar_credit: number;
+  history: { id: string; points: number; reason: string; created_at: string }[];
+};
+export type Perk = {
+  id: string; partner_name: string; title: string; description: string; category: string; image_url: string;
+  min_level: string; locked: boolean; claimed: boolean; code: string;
+};
 export type ChatMessage = { id: string; member_id: string; sender: "member" | "concierge"; sender_name: string; text: string; created_at: string };
 export type ChatThread = { member_id: string; member_name: string; member_level: string; last_text: string; last_at: string; unread: number };
 export type EventTable = { id: string; name: string; section: string; capacity: number; min_spend: number; x: number; y: number; min_level: string; booked: boolean };
@@ -371,7 +418,7 @@ export type EventRequest = {
   id: string; event_id: string; event_title: string; user_id: string; user_name: string; user_level: string;
   quantity: number; kind: "approval" | "waitlist"; status: "pending" | "approved" | "declined"; note: string; created_at: string;
 };
-export type JoinResult = { result: "ticket" | "pending" | "waitlisted"; ticket: Ticket | null; request: EventRequest | null };
+export type JoinResult = { result: "ticket" | "pending" | "waitlisted" | "payment_required"; ticket: Ticket | null; request: EventRequest | null };
 export type HostEvent = {
   id: string; title: string; venue_name: string; date: string; price: number; tickets_sold: number; capacity: number;
   approval_required: boolean; pending_requests: number; tables_booked: number; tables_total: number; checked_in: number;

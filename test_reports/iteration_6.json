@@ -1,0 +1,40 @@
+{
+  "summary": "Iteration 6 tested Reward Points, ticket credit, the Members Perks Wallet and the camera QR check-in. Backend: the new test file test_nocturne_rewards.py passed 11/11. The full regression suite (-n 0, ai_draft skipped) passed 83/83. Frontend (375x667): profile rewards/perks cards, /rewards redeem flow, /perks claim and unlock, the event-detail Reward credit row and points hint, a UI ticket purchase with credit applied ($92 -> $87), and the /checkin camera pre-prompt, Not now, Allow and manual check-in all worked with no page errors. No functional bugs found. Deprecated packages detected: none (uses expo-camera, no expo-av or expo-barcode-scanner).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "issue_ticket (server.py:553-589)", "issue": "Credit is taken from the user before the ticket insert. If tickets.insert_one fails, the credit is lost and nothing gives it back. Same for the redeem ledger insert after the $inc (rewards.py:49-54). Low risk, but these steps are not one transaction."},
+      {"endpoint": "PATCH /api/admin/partner-bookings/{id} (extras.py:310-312)", "issue": "Luxe points use the guest's level when the admin confirms, not when the guest booked. A guest who upgrades or downgrades in between gets a different multiplier. Check this is intended."},
+      {"endpoint": "points lifecycle", "issue": "Points are never reversed. There is no cancel or refund path today, but there is also no hook to take back points or credit if one is added."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Event detail after purchase", "issue": "After the user already holds a ticket, the event page still shows 'Buy ticket · $92.00'. Tapping it gets a 400 'already on guest list' from the backend. Existed before this round.", "testID": "buy-ticket-btn", "priority": "low"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/checkin", "issues": ["checkin-close is 40x40, below the 44pt touch target (checkin.tsx:176-179). The rewards and perks back buttons are 44."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_nocturne_rewards.py", "/app/backend/tests/cleanup_iteration6.py", "/app/test_reports/pytest/pytest_results_iter6.xml"],
+  "action_items": [
+    "Optional: add a guard to hide or disable buy-ticket-btn when the user already holds a ticket for the event.",
+    "Optional: make checkin-close 44x44.",
+    "Optional: give back credit_used if the ticket insert fails after the credit is taken in issue_ticket."
+  ],
+  "critical_code_review_comments": [
+    "Redeem is atomic: update_one has a points $gte filter. Credit can't go negative: credit_balance $gte guard plus min(credit, total). Verified by tests.",
+    "Ticket points are earned on total_paid, i.e. after credit is applied (correct, verified). The frontend points-hint uses the same formula as the backend.",
+    "Perk claim is idempotent: $setOnInsert upsert gives one claim doc. Locked perks return 403. The code only appears after claiming.",
+    "Checkin: permission flow handles granted, the pre-prompt and canAskAgain=false (Open Settings). Short ticket codes (#BE87C835, any case) resolve on the backend.",
+    "Older regression tests (test_nocturne_api, features, extras, race) buy with the seeded guest and promoter accounts. Their teardown deletes tickets and bookings but not points_ledger, and does not reset users.points. This leaves seeded users with points after every run. test_nocturne_membership.py deleted TEST users but left orphaned ledger rows (fixed in its teardown)."
+  ],
+  "updated_files": ["/app/backend/tests/test_nocturne_rewards.py (new)", "/app/backend/tests/cleanup_iteration6.py (new)", "/app/backend/tests/test_nocturne_membership.py (teardown also deletes points_ledger and perk_claims of TEST users)"],
+  "success_rate": {"backend": "100% (11/11 new, 83/83 regression)", "frontend": "100% of tested flows"},
+  "seed_data_creation": "Set guest points to 600 temporarily for the UI redeem test. Then reset all seeded users to level bronze, points 0, credit_balance 0, wallet 0. Deleted the UI ticket (tickets_sold decremented), the seeded users' points_ledger rows and perk_claims, and 5 orphaned ledger rows from deleted TEST users. Rooftop Reverie capacity is 2. All events have tickets_sold 0 and 0 TEST users remain.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run pytest with -n 0 -k 'not ai_draft' (about 3 min). Afterwards run tests/cleanup_iteration6.py (adjust SINCE). It resets seeded users' points and credit, which regression tests inflate. Headless Chromium grants a fake camera, so camera-allow opens camera-view on web. Perks: 9 seeded, 3 bronze, 6 locked for bronze. NOCWELCOME is the bronze welcome-cocktail code. Container clock is about 2026-11-14."
+}

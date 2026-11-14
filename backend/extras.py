@@ -304,6 +304,12 @@ async def set_booking_status(bid: str, body: StatusIn, _: AdminDep):
     res = await db.partner_bookings.update_one({"id": bid, "status": "requested"}, {"$set": {"status": body.status}})
     if res.matched_count == 0:
         raise HTTPException(400, "Booking not found or already handled")
+    b = await db.partner_bookings.find_one({"id": bid}, {"_id": 0})
+    if body.status == "confirmed":
+        from server import award_points
+        guest = await db.users.find_one({"id": b["user_id"]}, {"_id": 0})
+        if guest:
+            await award_points(guest, b["total"], f"Luxe · {b['partner_name']}")
     return PartnerBookingOut(**(await db.partner_bookings.find_one({"id": bid}, {"_id": 0})))
 
 
@@ -376,11 +382,12 @@ async def change_level(body: UpgradeIn, user: UserDep):
         raise HTTPException(400, "Business accounts already have full access")
     if body.level == user_level(user):
         raise HTTPException(400, "You are already on this level")
+    if LEVEL_RANK[body.level] > LEVEL_RANK[user_level(user)] and not (body.level == "bronze" and _bronze_free(user)):
+        raise HTTPException(402, "Payment required — continue to checkout")
     now = datetime.now(timezone.utc)
     await db.users.update_one({"id": user["id"]}, {"$set": {"level": body.level, "level_since": now}})
-    amount = 0.0 if (body.level == "bronze" and _bronze_free(user)) else LEVEL_PRICE[body.level]
     await db.membership_payments.insert_one({
         "id": str(uuid.uuid4()), "user_id": user["id"], "level": body.level,
-        "amount": amount, "simulated": True, "created_at": now,
+        "amount": 0.0, "kind": "downgrade", "created_at": now,
     })
     return public_user(await db.users.find_one({"id": user["id"]}, {"_id": 0}))

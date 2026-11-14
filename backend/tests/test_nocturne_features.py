@@ -1,12 +1,15 @@
 """Nocturne iteration 5: concierge chat, table map, join/approval/waitlist, guest list, host studio.
 All created data is tracked by id and removed at module teardown; seeded users reset to bronze / wallet 0."""
 import os
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
 import requests
 from dotenv import load_dotenv
 from pymongo import MongoClient
+
+from conftest import grant_credit, set_level
 
 load_dotenv("/app/frontend/.env")
 load_dotenv("/app/backend/.env")
@@ -16,7 +19,7 @@ GUEST = ("guest@nocturne.app", "GuestPass123!")
 PROMOTER = ("promoter@nocturne.app", "PromoterPass123!")
 VENUE = ("venue@nocturne.app", "VenuePass123!")
 ADMIN = ("admin@nocturne.app", "AdminPass123!")
-C = {"tickets": [], "bookings": [], "requests": [], "messages": [], "thread_members": set(), "venues": [], "events": []}
+C = {"users": [], "sessions": [], "tickets": [], "bookings": [], "requests": [], "messages": [], "thread_members": set(), "venues": [], "events": []}
 DB = MongoClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
 
 
@@ -66,20 +69,55 @@ def cleanup():
             DB.concierge_threads.delete_one({"member_id": m})
     DB.events.delete_many({"id": {"$in": C["events"]}})
     DB.venues.delete_many({"id": {"$in": C["venues"]}})
-    DB.users.update_many({"email": {"$in": [GUEST[0], PROMOTER[0], VENUE[0], ADMIN[0]]}},
-                         {"$set": {"level": "bronze", "wallet_balance": 0}})
+    recs = C["tickets"] + C["bookings"]
+    DB.venue_payables.delete_many({"record_id": {"$in": recs}})
+    DB.payment_transactions.delete_many({"$or": [{"session_id": {"$in": C["sessions"]}}, {"user_id": {"$in": C["users"]}}]})
+    DB.points_ledger.delete_many({"user_id": {"$in": C["users"]}})
+    DB.users.delete_many({"id": {"$in": C["users"]}})
     DB.events.update_many({"title": "Rooftop Reverie"}, {"$set": {"capacity": 2}})
+
+
+def test_user(level=None, name="TEST_ Features"):
+    """TEST_ guest with reward credit (paid items go through the credit path); optional paid level."""
+    r = requests.post(f"{API}/auth/register", json={
+        "email": f"test_{uuid.uuid4().hex[:8]}@nocturne.app", "password": "TestPass123!", "role": "guest",
+        "full_name": name, "membership_tier": "member", "marketing_opt_in": False})
+    assert r.status_code == 201, r.text
+    u = r.json()
+    C["users"].append(u["user"]["id"])
+    grant_credit(u["user"]["id"], 20000)
+    if level:
+        set_level(u["user"]["id"], level)
+    return u
+
+
+def book(u, eid, tid, party):
+    """Table booking via the credit path of /payments/checkout (direct /book is 402 by design)."""
+    r = requests.post(f"{API}/payments/checkout", json={"kind": "table", "origin_url": BASE_URL, "event_id": eid,
+                                                         "table_id": tid, "party_size": party}, headers=h(u))
+    if r.status_code != 200:
+        return r.status_code, None
+    assert r.json()["paid_with_credit"], r.json()
+    C["sessions"].append(r.json()["session_id"])
+    C["bookings"].append(r.json()["result_id"])
+    b = next(x for x in requests.get(f"{API}/table-bookings/mine", headers=h(u)).json() if x["id"] == r.json()["result_id"])
+    return 201, b
 
 
 @pytest.fixture(scope="module")
 def guest():
-    return login(GUEST)
+    return test_user()
 
 
 @pytest.fixture(scope="module")
 def promoter():
-    DB.users.update_one({"email": PROMOTER[0]}, {"$set": {"level": "silver"}})
-    return login(PROMOTER)
+    # silver-level TEST_ member (used as a silver buyer and as a non-owner for 403 checks)
+    return test_user("silver", "TEST_ Silver")
+
+
+@pytest.fixture(scope="module")
+def gold():
+    return test_user("gold", "TEST_ Gold")
 
 
 @pytest.fixture(scope="module")
@@ -146,29 +184,26 @@ class TestConcierge:
 
 # Table map
 class TestTables:
-    def test_tables_and_booking_rules(self, guest, owner, promoter):
+    def test_tables_and_booking_rules(self, guest, gold, promoter):
         ev = ev_by("Velvet Sessions w/ DJ Nyx")
         tables = requests.get(f"{API}/events/{ev['id']}/tables").json()
         assert len(tables) == 8
         byid = {t["id"]: t for t in tables}
         assert byid["V1"]["min_level"] == "silver" and byid["S1"]["min_level"] == "silver" and byid["T1"]["min_level"] == "bronze"
         url = f"{API}/events/{ev['id']}/tables"
-        assert requests.post(f"{url}/T1/book", json={"party_size": 7}, headers=h(guest)).status_code == 400
-        assert requests.post(f"{url}/V1/book", json={"party_size": 2}, headers=h(guest)).status_code == 403
-        assert requests.post(f"{url}/ZZ/book", json={"party_size": 2}, headers=h(guest)).status_code == 404
-        r = requests.post(f"{url}/T1/book", json={"party_size": 4}, headers=h(guest))
-        assert r.status_code == 201, r.text
-        b = r.json(); C["bookings"].append(b["id"])
+        assert requests.post(f"{url}/T1/book", json={"party_size": 4}, headers=h(guest)).status_code == 402
+        assert book(guest, ev["id"], "T1", 7)[0] == 400
+        assert book(guest, ev["id"], "V1", 2)[0] == 403
+        assert book(guest, ev["id"], "ZZ", 2)[0] == 404
+        code, b = book(guest, ev["id"], "T1", 4)
+        assert code == 201
         assert b["platform_fee"] == round(byid["T1"]["min_spend"] * 0.25, 2)
         assert b["total"] == round(byid["T1"]["min_spend"] + b["platform_fee"], 2)
-        dup = requests.post(f"{url}/T1/book", json={"party_size": 2}, headers=h(owner))
-        assert dup.status_code == 409, dup.text
-        r = requests.post(f"{url}/V1/book", json={"party_size": 8}, headers=h(owner))
-        assert r.status_code == 201; C["bookings"].append(r.json()["id"])
-        assert r.json()["platform_fee"] == round(byid["V1"]["min_spend"] * 0.15, 2)
-        r = requests.post(f"{url}/T2/book", json={"party_size": 2}, headers=h(promoter))
-        assert r.status_code == 201; C["bookings"].append(r.json()["id"])
-        assert r.json()["platform_fee"] == round(byid["T2"]["min_spend"] * 0.20, 2)
+        assert book(gold, ev["id"], "T1", 2)[0] == 409
+        code, b = book(gold, ev["id"], "V1", 8)
+        assert code == 201 and b["platform_fee"] == round(byid["V1"]["min_spend"] * 0.15, 2)
+        code, b = book(promoter, ev["id"], "T2", 2)
+        assert code == 201 and b["platform_fee"] == round(byid["T2"]["min_spend"] * 0.20, 2)
         booked = {t["id"]: t["booked"] for t in requests.get(url).json()}
         assert booked["T1"] and booked["V1"] and booked["T2"] and not booked["T3"]
         mine = requests.get(f"{API}/table-bookings/mine", headers=h(guest)).json()

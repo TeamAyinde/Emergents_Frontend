@@ -1,0 +1,54 @@
+{
+  "summary": "Iteration 7 tested Stripe Checkout payments, Google sign-in, admin payouts and the 402 changes on direct endpoints. Backend: new file test_nocturne_payments.py passed 13/13. It covers checkout for all 4 kinds with server-side pricing and validation, status (pending, and 404 for another user), the full credit path (ticket, venue_payables row, MARCO1 promoter wallet +$9.60), partial credit then cancel with refund and no double refund, 402 on direct endpoints, join returning payment_required, approve-then-pay using the request quantity, Google /auth/session 401, the withdrawal pending -> mark paid queue, venue settle, host payouts and /payments/done. Full regression (-n 0): 70 passed, 26 legacy direct-purchase tests skipped through conftest.py (they now get 402 by design). Frontend (375x667): the Google buttons show and redirect to auth.emergentagent.com. A REAL Stripe test payment with card 4242 worked end to end on web: event 'Pay $92.00 · Card' -> Stripe -> /payment-result showed payment-status-paid -> View my ticket -> ticket page. The ticket and a $80 venue_payables row were created. Also checked: the cancelled screen, membership 'Pay $49 · Upgrade to Silver' -> Stripe $49.00, venue 'Pay deposit · $250.00' -> Stripe $250.00, table 'Pay deposit · $460.00' -> Stripe $460.00, and admin Payouts screen stats plus 'Mark sent' for a withdrawal. Bugs found: (1) Stripe charges 1 cent less than the app shows for some amounts: $36.80 in the app became $36.79 on Stripe. (2) No venue_payables row is written when a ticket is covered by credit through a direct path. (3) Reward credit reserved at checkout gets stuck if the guest leaves Stripe without using the cancel link. Deprecated packages detected: none (no expo-av, expo-barcode-scanner or expo-background-fetch).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/payments/checkout (payments.py:224-225)", "issue": "Stripe amount is truncated by 1 cent. emergentintegrations does int(amount*100), so 36.8 becomes 3679 cents. Reproduced: admin ticket for 'Midnight Gold — Grand Opening' shows Total $36.80 in the app, but the Stripe page shows $36.79. The payment_transactions.amount and the ticket record say 36.8. Fix: pass an amount that converts exactly, e.g. cents = int(round(due*100)); amount = cents/100 + 0.001, or patch the conversion to use round().", "priority": "HIGH"},
+      {"endpoint": "issue_ticket / save_table / save_reservation when not paid through checkout", "issue": "venue_payables is only written in payments._fulfil. Tickets covered by credit through POST /api/tickets/purchase, POST /api/events/{id}/join, or host approval when credit covers (features.py:443-451) create no payable, so the venue is never owed its share. Verified with tests/inspect_payables_direct.py: a credit-covered direct purchase returned 201 and no venue_payables row was created. Fix: move payable creation into a shared helper called by every path that issues a ticket or booking.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "POST /api/payments/checkout credit reservation (payments.py:198-202)", "issue": "Credit is taken when checkout starts. It only comes back via the cancel URL, POST /payments/cancel, or a later status poll after Stripe reports the session expired (about 24h). If the guest closes the tab or uses browser back from Stripe (verified: back goes to /membership, the cancel URL is never hit), the credit stays deducted. Handle the checkout.session.expired webhook and/or set a short expires_at plus a sweep job."},
+      {"endpoint": "_fulfil / _quote (payments.py:89-104, 136)", "issue": "A user can open several checkout sessions for the same event, or for a membership upgrade. _fulfil calls issue_ticket(override=True), which skips both the capacity check and the existing-ticket check. Paying two sessions gives two tickets and two charges, and last-spot races oversell. Re-check in _fulfil (flag needs_refund) and/or reuse or expire the previous open session."},
+      {"endpoint": "credit-only checkout (payments.py:206-213)", "issue": "If _complete marks the tx failed (for example the table is taken in a race), the API returns 409 but the credit already deducted is not given back. Call _refund_credit on failure."},
+      {"endpoint": "_complete (payments.py:169-181)", "issue": "fulfilled=True is set before _fulfil runs, and only HTTPException is caught. Any other error leaves the tx as paid and fulfilled, with no result_id and no needs_refund flag. Catch Exception and set needs_refund."},
+      {"endpoint": "POST /api/payments/cancel (payments.py:283)", "issue": "Marks the tx cancelled and refunds credit, but does not expire the Stripe session. The guest can still pay in another tab. The status endpoint then skips the Stripe check for cancelled txs (line 250), so only the webhook would fulfil, and the credit has already been refunded. Call stripe.checkout.Session.expire on cancel."},
+      {"endpoint": "POST /api/reservations", "issue": "Returns 402 even when the user's credit covers the total, while /tickets/purchase accepts credit. Inconsistent, but the UI always goes through checkout, so low impact."},
+      {"endpoint": "POST /api/admin/payouts/venues/{id}/settle", "issue": "Settles every row still marked owed, including rows created after the admin loaded the screen. No amount is passed or confirmed."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "payment-result.tsx", "issue": "An unknown session (404 'Payment not found') keeps the 'Confirming payment…' spinner for 15 polls (30s). It should stop on 404 and show an error state.", "testID": "payment-status-pending", "priority": "LOW"},
+      {"component": "admin/payouts.tsx", "issue": "'Mark paid' and 'Mark sent' have no confirmation, no pending or disabled state (a double tap fires twice), and no error message on failure. A query error leaves the spinner forever. payouts-back uses router.back() with no fallback, so opening /admin/payouts directly and tapping back does nothing.", "testID": "settle-{venue_id} / mark-paid-{id} / payouts-back", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [
+      {"flow": "Stripe return on web/native -> auth bootstrap", "issue": "sessionIdFrom() in auth-context.tsx:21-24 matches any session_id param. Every return to /payment-result?session_id=cs_test_... sends a POST /api/auth/session that gets 401 (4 seen in backend.out.log). It does no harm, but it is an extra failing call. Only exchange ids from the Google redirect (for example skip ids starting 'cs_' or 'credit_', or only on the '/' path).", "affected_testIDs": ["payment-status-paid"]}
+    ],
+    "design_issues": [
+      {"screen": "event/[id] with table map", "issues": ["The sticky 'Pay $X · Card' ticket footer covers the table-detail 'Pay deposit' button when it is scrolled only just into view. Two gold 'Pay' CTAs on one screen can also confuse a table buyer. Consider hiding the ticket footer while a table is selected."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_nocturne_payments.py", "/app/backend/tests/conftest.py", "/app/backend/tests/inspect_payables_direct.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "HIGH: Fix the 1-cent truncation when passing amounts to StripeCheckout (payments.py:224-225).",
+    "HIGH: Write venue_payables for every ticket, table and reservation issued outside _fulfil (direct credit purchase, join, host approval covered by credit).",
+    "Refund reserved credit when a Stripe session expires or is abandoned (webhook checkout.session.expired or a sweep), and expire the Stripe session in /payments/cancel.",
+    "Stop double fulfilment: check for an existing ticket or level in _fulfil, and reuse or expire earlier open sessions for the same target.",
+    "Refund credit when credit-only checkout fulfilment fails; catch all exceptions in _complete and flag needs_refund.",
+    "Ignore Stripe session_id in the auth-context Google session_id detection.",
+    "payment-result: stop polling on 404 and show an error. admin/payouts: add a confirm dialog, disabled/pending state, error display, and a back fallback.",
+    "Rewrite the 26 legacy tests skipped in tests/conftest.py (LEGACY_402) so they set up via the credit path of /api/payments/checkout, then remove the skip list."
+  ],
+  "critical_code_review_comments": [
+    "payments.py is well structured: server-side pricing, idempotent _complete via find_one_and_update, return_url scheme allow-list, and escaped HTML on /payments/done.",
+    "card_payments_total also counts paid txs whose fulfilment failed (needs_refund). That is fine, but label it so admins know refunds are pending.",
+    "Reservation fulfilled via checkout does not record credit_used, and award_points uses the full total rather than the amount actually paid (server.py:829).",
+    "Google /auth/session links any verified Google email to an existing account, including admin. That is acceptable because Google verifies the email, but consider blocking automatic linking for admin/venue_owner roles."
+  ],
+  "updated_files": ["/app/backend/tests/test_nocturne_payments.py (new)", "/app/backend/tests/conftest.py (new: skips 26 legacy 402 tests)", "/app/backend/tests/inspect_payables_direct.py (new one-off check)"],
+  "success_rate": {"backend": "100% of the new payment tests (13/13); full suite 70 passed / 26 legacy skipped", "frontend": "~90% (all requested flows work; 1-cent Stripe mismatch and minor UX gaps)"},
+  "seed_data_creation": "Only TEST_ users, txs, tickets, payables, requests and withdrawals were created, and all were removed by id. Seeded accounts are unchanged (wallet 0, credit 0, bronze). During cleanup, Industry Fridays tickets_sold was found at -1 with 0 tickets (left by an earlier aborted xdist run that also leaked a TEST_ event_request). It was restored to 0 and the request was deleted.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Use EXPO_PUBLIC_BACKEND_URL from frontend/.env. Stripe checkout form fields sit inside the js.stripe.com elements-inner iframe: find the frame with placeholder 'Card number', then fill #paymentForm-emailInput, #payment-numberInput, #payment-expiryInput, #payment-cvcInput, #payment-nameInput, #payment-postalCodeInput and click the 'Pay' button (exact). Run pytest with -n 0 (xdist breaks class-shared STATE in the extras tests). Tables need silver or above, so use the admin account for table UI tests. Venue owner owns The Ember Room (Industry Fridays, approval required). 4 pre-existing payment_transactions from guest@ belong to the main agent; they were left alone."
+}

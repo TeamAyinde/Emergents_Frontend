@@ -120,6 +120,8 @@ class UserOut(BaseModel):
     level_since: Optional[datetime] = None
     referral_code: str
     wallet_balance: float
+    points: int = 0
+    credit_balance: float = 0.0
     marketing_opt_in: bool = False
     phone: Optional[str] = None
     city: Optional[str] = None
@@ -201,6 +203,7 @@ class TicketOut(BaseModel):
     promoter_earning: float
     checked_in: bool
     created_at: datetime
+    credit_used: float = 0.0
 
 
 class ReservationIn(BaseModel):
@@ -283,6 +286,8 @@ def public_user(u: dict) -> UserOut:
         level_since=u.get("level_since"),
         referral_code=u["referral_code"],
         wallet_balance=round(u.get("wallet_balance", 0.0), 2),
+        points=int(u.get("points", 0)),
+        credit_balance=round(u.get("credit_balance", 0.0), 2),
         marketing_opt_in=u.get("marketing_opt_in", False),
         phone=u.get("phone"),
         city=u.get("city"),
@@ -330,6 +335,34 @@ def user_level(u: dict) -> str:
 def require_level(u: dict, min_level: str) -> None:
     if LEVEL_RANK[user_level(u)] < LEVEL_RANK.get(min_level, 0):
         raise HTTPException(403, f"{min_level.capitalize()} membership required")
+
+
+POINTS_MULTIPLIER = {"bronze": 1.0, "silver": 1.5, "gold": 2.0}
+
+
+async def award_points(user: dict, amount: float, reason: str) -> int:
+    """1 point per $1 spent; Silver 1.5x, Gold 2x."""
+    pts = int(round(max(0.0, amount) * POINTS_MULTIPLIER[user_level(user)]))
+    if pts <= 0:
+        return 0
+    await db.users.update_one({"id": user["id"]}, {"$inc": {"points": pts}})
+    await db.points_ledger.insert_one({
+        "id": str(uuid.uuid4()), "user_id": user["id"], "points": pts, "reason": reason,
+        "created_at": datetime.now(timezone.utc),
+    })
+    return pts
+
+
+async def record_venue_share(venue_id: Optional[str], amount: float, source: str, record_id: str) -> None:
+    """Nocturne collected the money; log what it owes the venue (paid out by the admin)."""
+    if not venue_id or amount <= 0:
+        return
+    venue = await db.venues.find_one({"id": venue_id}, {"_id": 0, "name": 1})
+    await db.venue_payables.insert_one({
+        "id": str(uuid.uuid4()), "venue_id": venue_id, "venue_name": (venue or {}).get("name", ""),
+        "amount": round(amount, 2), "source": source, "record_id": record_id, "status": "owed",
+        "created_at": datetime.now(timezone.utc),
+    })
 
 
 def make_tables(base: float, min_level: str) -> list:
@@ -395,8 +428,44 @@ async def register(body: RegisterIn):
 @api.post("/auth/login", response_model=TokenOut)
 async def login(body: LoginIn):
     user = await db.users.find_one({"email": body.email.lower()}, {"_id": 0})
-    if not user or not verify_password(body.password, user["password_hash"]):
+    if not user or not verify_password(body.password, user.get("password_hash") or ""):
         raise HTTPException(401, "Incorrect email or password")
+    return {"access_token": issue_token(user), "user": public_user(user)}
+
+
+class GoogleSessionIn(BaseModel):
+    session_id: str = Field(min_length=1, max_length=512)
+
+
+@api.post("/auth/session", response_model=TokenOut)
+async def google_session(body: GoogleSessionIn):
+    """Exchanges the one-time Emergent Google `session_id` for a Nocturne token."""
+    import httpx
+
+    async with httpx.AsyncClient(timeout=15) as http:
+        r = await http.get(
+            "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
+            headers={"X-Session-ID": body.session_id},
+        )
+    if r.status_code != 200:
+        raise HTTPException(401, "Google sign-in failed — try again")
+    data = r.json()
+    email = (data.get("email") or "").lower()
+    if not email:
+        raise HTTPException(401, "Google sign-in failed — try again")
+    user = await db.users.find_one({"email": email}, {"_id": 0})
+    if not user:
+        name = (data.get("name") or email.split("@")[0]).strip()[:80]
+        user = {
+            "id": str(uuid.uuid4()), "email": email, "password_hash": None, "full_name": name,
+            "role": "guest", "membership_tier": "member", "level": "bronze",
+            "level_since": datetime.now(timezone.utc), "referral_code": _referral_code(name),
+            "wallet_balance": 0.0, "phone": None, "city": None, "picture": data.get("picture"),
+            "auth_provider": "google", "marketing_opt_in": True,
+            "marketing_opt_in_at": datetime.now(timezone.utc), "created_at": datetime.now(timezone.utc),
+        }
+        await db.users.insert_one(user)
+        user.pop("_id", None)
     return {"access_token": issue_token(user), "user": public_user(user)}
 
 
@@ -514,21 +583,44 @@ async def purchase_ticket(
         raise HTTPException(400, f"Max {1 + event.get('plus_one_limit', 7)} tickets per guest")
     if event.get("approval_required"):
         raise HTTPException(409, "This event needs host approval — request to join")
+    if amount_due(ticket_price(event, user, body.quantity)[2], user) > 0:
+        raise HTTPException(402, "Payment required — continue to checkout")
     return await issue_ticket(event, user, body.quantity, body.promoter_code)
 
 
-async def issue_ticket(event: dict, user: dict, qty: int, promoter_code: Optional[str], override: bool = False) -> "TicketOut":
-    """Atomically reserves `qty` spots (unless the host overrides capacity), then writes the ticket."""
+def ticket_price(event: dict, user: dict, qty: int) -> tuple[float, float, float]:
+    """(base after member discount, platform fee, total) for `qty` tickets."""
+    base = round(event["price"] * qty * (1 - LEVEL_TICKET_DISCOUNT[user_level(user)]), 2)
+    fee = round(base * PLATFORM_FEE_PCT, 2)
+    return base, fee, round(base + fee, 2)
+
+
+def amount_due(total: float, user: dict) -> float:
+    """What the member still owes after their reward credit."""
+    return round(max(0.0, total - user.get("credit_balance", 0.0)), 2)
+
+
+async def issue_ticket(
+    event: dict, user: dict, qty: int, promoter_code: Optional[str], override: bool = False,
+    credit_used: Optional[float] = None, payment_session: Optional[str] = None,
+) -> "TicketOut":
+    """Atomically reserves `qty` spots (unless the host overrides capacity), then writes the ticket.
+    When `credit_used` is given the credit was already taken at checkout."""
     cond = {"id": event["id"]}
     if not override:
         cond["$expr"] = {"$lte": [{"$add": [{"$ifNull": ["$tickets_sold", 0]}, qty]}, {"$ifNull": ["$capacity", 1000000]}]}
     res = await db.events.update_one(cond, {"$inc": {"tickets_sold": qty}})
     if res.modified_count == 0:
         raise HTTPException(409, "Sold out — join the waitlist")
-    lvl = user_level(user)
-    base = round(event["price"] * qty * (1 - LEVEL_TICKET_DISCOUNT[lvl]), 2)
-    platform_fee = round(base * PLATFORM_FEE_PCT, 2)
-    total = round(base + platform_fee, 2)
+    base, platform_fee, total = ticket_price(event, user, qty)
+    prepaid = credit_used is not None
+    credit_used = credit_used or 0.0
+    if not prepaid and user.get("credit_balance", 0) > 0 and total > 0:
+        credit_used = round(min(user["credit_balance"], total), 2)
+        res_c = await db.users.update_one({"id": user["id"], "credit_balance": {"$gte": credit_used}},
+                                          {"$inc": {"credit_balance": -credit_used}})
+        if res_c.modified_count == 0:
+            credit_used = 0.0
 
     promoter_id = None
     promoter_earning = 0.0
@@ -551,13 +643,18 @@ async def issue_ticket(event: dict, user: dict, qty: int, promoter_code: Optiona
         "user_id": user["id"],
         "promoter_id": promoter_id,
         "quantity": qty,
-        "total_paid": total,
+        "total_paid": round(total - credit_used, 2),
+        "credit_used": credit_used,
         "platform_fee": platform_fee,
         "promoter_earning": promoter_earning,
+        "venue_share": base,
+        "payment_session": payment_session,
         "checked_in": False,
         "created_at": datetime.now(timezone.utc),
     }
     await db.tickets.insert_one(doc)
+    await record_venue_share(event.get("venue_id"), base, "ticket", doc["id"])
+    await award_points(user, doc["total_paid"], f"Tickets · {event['title']}")
     if promoter_id and promoter_earning > 0:
         await db.users.update_one(
             {"id": promoter_id}, {"$inc": {"wallet_balance": promoter_earning}}
@@ -688,16 +785,17 @@ async def withdraw(
     if res.modified_count == 0:
         raise HTTPException(400, "Insufficient balance")
     await db.withdrawals.insert_one({
-        "id": str(uuid.uuid4()), "user_id": user["id"], "amount": body.amount,
-        "fee": fee, "net": net, "created_at": datetime.now(timezone.utc),
+        "id": str(uuid.uuid4()), "user_id": user["id"], "user_name": user["full_name"],
+        "amount": body.amount, "fee": fee, "net": net, "status": "pending",
+        "created_at": datetime.now(timezone.utc),
     })
-    return {"withdrawn": body.amount, "fee": fee, "net": net}
+    return {"withdrawn": body.amount, "fee": fee, "net": net, "status": "pending"}
 
 
 # ---------- Reservations ----------
 
-@api.post("/reservations", response_model=ReservationOut, status_code=201)
-async def create_reservation(body: ReservationIn, user: Annotated[dict, Depends(current_user)]):
+async def quote_reservation(body: "ReservationIn", user: dict) -> tuple[dict, float, float]:
+    """Validates a reservation request; returns (venue, platform fee, total)."""
     venue = await db.venues.find_one({"id": body.venue_id}, {"_id": 0})
     if not venue:
         raise HTTPException(404, "Venue not found")
@@ -711,7 +809,19 @@ async def create_reservation(body: ReservationIn, user: Annotated[dict, Depends(
         raise HTTPException(400, "Reservation date must be in the future")
     require_level(user, venue.get("min_level", "bronze"))
     fee = round(body.base_price * LEVEL_BOOKING_FEE[user_level(user)], 2)
-    total = round(body.base_price + fee, 2)
+    return venue, fee, round(body.base_price + fee, 2)
+
+
+@api.post("/reservations", response_model=ReservationOut, status_code=201)
+async def create_reservation(body: ReservationIn, user: Annotated[dict, Depends(current_user)]):
+    _, _, total = await quote_reservation(body, user)
+    if total > 0:
+        raise HTTPException(402, "Payment required — continue to checkout")
+    return await save_reservation(body, user)
+
+
+async def save_reservation(body: "ReservationIn", user: dict, payment_session: Optional[str] = None) -> "ReservationOut":
+    venue, fee, total = await quote_reservation(body, user)
     doc = {
         "id": str(uuid.uuid4()),
         "venue_id": body.venue_id,
@@ -725,9 +835,12 @@ async def create_reservation(body: ReservationIn, user: Annotated[dict, Depends(
         "total": total,
         "status": "confirmed",
         "notes": body.notes or "",
+        "payment_session": payment_session,
         "created_at": datetime.now(timezone.utc),
     }
     await db.reservations.insert_one(doc)
+    await record_venue_share(venue["id"], body.base_price, "reservation", doc["id"])
+    await award_points(user, doc["total"], f"Reservation · {venue['name']}")
     doc.pop("_id", None)
     return ReservationOut(**doc)
 
@@ -742,10 +855,14 @@ async def my_reservations(user: Annotated[dict, Depends(current_user)]):
 
 from extras import router as extras_router  # noqa: E402
 from features import ensure_feature_indexes, router as features_router  # noqa: E402
+from rewards import router as rewards_router  # noqa: E402
+from payments import router as payments_router  # noqa: E402
 
 app.include_router(api)
 app.include_router(extras_router)
 app.include_router(features_router)
+app.include_router(rewards_router)
+app.include_router(payments_router)
 
 app.add_middleware(
     CORSMiddleware,

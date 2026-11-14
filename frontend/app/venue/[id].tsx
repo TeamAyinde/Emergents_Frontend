@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -20,6 +20,7 @@ import { colors, radius, spacing } from "@/src/theme";
 import { LuxButton } from "@/src/ui";
 import { useAuth } from "@/src/auth-context";
 import { canAccess, Level, LEVEL_INFO } from "@/src/levels";
+import { startCheckout } from "@/src/payments";
 
 const SERVICES = [
   { v: "table", label: "Table", price: 200 },
@@ -31,7 +32,6 @@ export default function VenueDetails() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const qc = useQueryClient();
   const [service, setService] = useState(SERVICES[0]);
   const [party, setParty] = useState("4");
   const [notes, setNotes] = useState("");
@@ -48,17 +48,17 @@ export default function VenueDetails() {
   const { data: v, isLoading } = useQuery({ queryKey: ["venue", id], queryFn: () => api.getVenue(id!) });
   const book = useMutation({
     mutationFn: () =>
-      api.createReservation({
-        venue_id: id!,
-        date: nights[night].toISOString(),
-        party_size: parseInt(party || "1", 10),
-        service_type: service.v,
-        base_price: service.price,
-        notes,
-      }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["mine-reservations"] });
-    },
+      startCheckout(
+        {
+          kind: "reservation",
+          venue_id: id!,
+          date: nights[night].toISOString(),
+          party_size: parseInt(party || "1", 10),
+          service_type: service.v,
+          notes,
+        },
+        router,
+      ),
   });
 
   if (isLoading || !v) {
@@ -173,11 +173,6 @@ export default function VenueDetails() {
       </ScrollView>
 
       <View style={[styles.sticky, { paddingBottom: insets.bottom + spacing.md }]}>
-        {book.isSuccess ? (
-          <Text testID="reservation-success" style={{ color: colors.success, marginBottom: spacing.sm }}>
-            Reservation confirmed — see it in your Profile.
-          </Text>
-        ) : null}
         {book.error ? (
           <Text testID="reservation-error" style={{ color: colors.error, marginBottom: spacing.sm }}>
             {book.error.message}
@@ -192,8 +187,8 @@ export default function VenueDetails() {
         ) : (
         <LuxButton
           testID="confirm-reservation-btn"
-          label={book.isPending ? "Booking…" : book.isSuccess ? "Back to venues" : `Reserve · $${total.toFixed(2)}`}
-          onPress={() => (book.isSuccess ? router.back() : book.mutate())}
+          label={book.isPending ? "Opening checkout…" : `Pay deposit · $${total.toFixed(2)}`}
+          onPress={() => book.mutate()}
           loading={book.isPending}
         />
         )}

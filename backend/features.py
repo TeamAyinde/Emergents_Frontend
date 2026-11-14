@@ -8,8 +8,8 @@ from pydantic import BaseModel, Field
 from pymongo import ASCENDING, DESCENDING
 
 from server import (
-    LEVEL_BOOKING_FEE, TicketOut, VenueOut, current_user, db, issue_ticket,
-    require_level, require_roles, user_level,
+    award_points, LEVEL_BOOKING_FEE, TicketOut, VenueOut, amount_due, current_user, db, issue_ticket,
+    record_venue_share, require_level, require_roles, ticket_price, user_level,
 )
 
 router = APIRouter(prefix="/api")
@@ -168,8 +168,8 @@ async def event_tables(eid: str):
     return [TableOut(**t, booked=t["id"] in booked) for t in ev.get("tables", [])]
 
 
-@router.post("/events/{eid}/tables/{tid}/book", response_model=TableBookingOut, status_code=201)
-async def book_table(eid: str, tid: str, body: TableBookIn, user: UserDep):
+async def quote_table(eid: str, tid: str, party_size: int, user: dict) -> tuple[dict, dict, float]:
+    """Validates a table booking; returns (event, table, platform fee)."""
     ev = await _event(eid)
     if _aware(ev["date"]) < _now():
         raise HTTPException(400, "This event has already happened")
@@ -177,19 +177,36 @@ async def book_table(eid: str, tid: str, body: TableBookIn, user: UserDep):
     if not table:
         raise HTTPException(404, "Table not found")
     require_level(user, table["min_level"])
-    if body.party_size > table["capacity"]:
+    if party_size > table["capacity"]:
         raise HTTPException(400, f"This table seats up to {table['capacity']}")
-    fee = round(table["min_spend"] * LEVEL_BOOKING_FEE[user_level(user)], 2)
+    if await db.table_bookings.find_one({"event_id": eid, "table_id": tid, "status": "confirmed"}, {"_id": 1}):
+        raise HTTPException(409, "Someone just booked this table — pick another")
+    return ev, table, round(table["min_spend"] * LEVEL_BOOKING_FEE[user_level(user)], 2)
+
+
+@router.post("/events/{eid}/tables/{tid}/book", response_model=TableBookingOut, status_code=201)
+async def book_table(eid: str, tid: str, body: TableBookIn, user: UserDep):
+    _, table, fee = await quote_table(eid, tid, body.party_size, user)
+    if table["min_spend"] + fee > 0:
+        raise HTTPException(402, "Payment required — continue to checkout")
+    return await save_table(eid, tid, body.party_size, user)
+
+
+async def save_table(eid: str, tid: str, party_size: int, user: dict, payment_session: Optional[str] = None) -> TableBookingOut:
+    ev, table, fee = await quote_table(eid, tid, party_size, user)
     doc = {
         "id": str(uuid.uuid4()), "event_id": eid, "event_title": ev["title"], "event_date": ev["date"],
         "venue_name": ev["venue_name"], "table_id": tid, "section": table["section"], "user_id": user["id"],
-        "user_name": user["full_name"], "party_size": body.party_size, "min_spend": table["min_spend"],
-        "platform_fee": fee, "total": round(table["min_spend"] + fee, 2), "status": "confirmed", "created_at": _now(),
+        "user_name": user["full_name"], "party_size": party_size, "min_spend": table["min_spend"],
+        "platform_fee": fee, "total": round(table["min_spend"] + fee, 2), "status": "confirmed",
+        "payment_session": payment_session, "created_at": _now(),
     }
     try:
         await db.table_bookings.insert_one(doc)
     except Exception:
         raise HTTPException(409, "Someone just booked this table — pick another")
+    await record_venue_share(ev.get("venue_id"), table["min_spend"], "table", doc["id"])
+    await award_points(user, doc["total"], f"Table {tid} · {ev['title']}")
     doc.pop("_id", None)
     return TableBookingOut(**doc)
 
@@ -228,6 +245,11 @@ class JoinOut(BaseModel):
     request: Optional[RequestOut] = None
 
 
+async def approved_request(eid: str, uid: str) -> Optional[dict]:
+    """An approved request the guest still has to pay for (paid events)."""
+    return await db.event_requests.find_one({"event_id": eid, "user_id": uid, "status": "approved", "ticket_issued": {"$ne": True}}, {"_id": 0})
+
+
 @router.post("/events/{eid}/join", response_model=JoinOut)
 async def join_event(eid: str, body: JoinIn, user: UserDep):
     ev = await _event(eid)
@@ -239,7 +261,17 @@ async def join_event(eid: str, body: JoinIn, user: UserDep):
         raise HTTPException(400, f"Max {limit} spots per guest (you + {limit - 1})")
     if await db.tickets.find_one({"event_id": eid, "user_id": user["id"]}, {"_id": 1}):
         raise HTTPException(400, "You're already on the guest list — see your ticket in Profile")
+    approved = await approved_request(eid, user["id"])
+    if approved or (not ev.get("approval_required")
+                    and ev.get("tickets_sold", 0) + body.quantity <= ev.get("capacity", 10**6)):
+        qty = approved["quantity"] if approved else body.quantity
+        if amount_due(ticket_price(ev, user, qty)[2], user) > 0:
+            return JoinOut(result="payment_required")
     sold_out = ev.get("tickets_sold", 0) + body.quantity > ev.get("capacity", 10**6)
+    if approved:
+        ticket = await issue_ticket(ev, user, approved["quantity"], approved.get("promoter_code"), override=True)
+        await db.event_requests.update_one({"id": approved["id"]}, {"$set": {"ticket_issued": True}})
+        return JoinOut(result="ticket", ticket=ticket)
     if not ev.get("approval_required") and not sold_out:
         try:
             return JoinOut(result="ticket", ticket=await issue_ticket(ev, user, body.quantity, body.promoter_code))
@@ -411,6 +443,10 @@ async def decide_request(rid: str, body: DecisionIn, user: HostDep):
         raise HTTPException(400, "Request already handled")
     if new_status == "approved":
         guest = await db.users.find_one({"id": req["user_id"]}, {"_id": 0})
+        if guest and amount_due(ticket_price(ev, guest, req["quantity"])[2], guest) > 0:
+            # paid event: the guest pays at checkout, then the ticket is issued
+            req["status"] = new_status
+            return RequestOut(**req)
         if guest:
             try:
                 await issue_ticket(ev, guest, req["quantity"], req.get("promoter_code"), override=req["kind"] == "waitlist")

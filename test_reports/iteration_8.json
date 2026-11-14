@@ -1,0 +1,62 @@
+{
+  "summary": "Retest of the iteration-7 fixes. All requested fixes work. Backend: 110/110 pytest pass with -n 0 and 0 skipped (before: 72 passed, 26 skipped). New file test_nocturne_payments_fixes.py has 11 tests. 10 of them check the fixes directly; the 11th covers cancel on an unknown session and a 404 on an unknown status. What was verified: (1) a $36.80 charge reaches Stripe as amount_total 3680, and the UI shows $73.60 on the Stripe page. (2) Exactly 1 venue_payable is written for each of: credit-covered POST /tickets/purchase, /events/{id}/join, host approval covered by credit, and credit-only checkout for ticket, table and reservation. Payables are not double-recorded on the checkout path. (3) A new checkout for the same item cancels the earlier attempt. Its credit is refunded once, and repeat cancels do not refund again. Cancel works by tx id and by session id. (4) _fulfil rejects a second ticket for the same user: status failed, needs_refund set, credit refunded. It enforces capacity and lets approved requests override it. (5) _complete catches a generic KeyError, marks the tx failed, refunds credit, and is idempotent. (6) A credit-only checkout whose fulfilment fails returns 409 and refunds the credit. The 23 legacy LEGACY_402 entries (26 test items) were rewritten and the skip list was removed. Frontend (390x844 web): /payment-result with an unknown session stops spinning, shows 'Payment not found', and makes no /api/auth/session call. Admin payouts: the confirm dialog shows the right text, and dismissing it does not settle. The load error is shown, and 'Try again' recovers. Opening the screen directly and tapping back goes to /admin. On the event page, 'Pay deposit' is not covered by the sticky bar even at maximum scroll. Deprecated packages detected: none.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/payments/checkout", "issue": "Earlier open attempts are closed (_close_open) before _quote validates the new request. A new checkout that fails validation (400/403/409) still cancels the user's previous valid open checkout. Move the close loop after _quote. payments.py:204-211"},
+      {"endpoint": "POST /api/payments/checkout (reservation)", "issue": "The 'same item' filter for reservations uses only venue_id. Starting a checkout for another night or service at the same venue cancels an unpaid checkout for a different booking. Add date and service_type to the filter. payments.py:205-206"},
+      {"endpoint": "save_table / save_reservation (points)", "issue": "Points are awarded on the full total, including reward credit used at checkout. Tickets award points only on total_paid (credit excluded). Table and reservation docs also do not store credit_used. This lets members earn points on credit they spend. features.py:209, server.py:843"},
+      {"endpoint": "POST /api/reservations, POST /api/events/{id}/tables/{tid}/book", "issue": "These return 402 whenever the total is above 0, even if reward credit covers it. /tickets/purchase and /join accept credit-covered direct purchases. The API is inconsistent, but checkout's credit path covers this case."},
+      {"endpoint": "_complete", "issue": "Overwrites payment_status 'credit' with 'paid' for credit-only transactions. Totals are not affected (amount is 0), but the record is misleading. payments.py:161-164"},
+      {"endpoint": "POST /api/admin/payouts/venues/{id}/settle", "issue": "Marks every currently owed payable as paid, with no snapshot of the amount the admin confirmed. A payable created between viewing and confirming is settled without being seen. Pass the confirmed amount or the max created_at."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "payment-result (unknown session)", "issue": "Shows 'Still confirming… Your bank is taking a moment. If you paid, your booking will appear…' plus a red 'Payment not found'. The copy is misleading when the payment does not exist. Show a dedicated 'We couldn't find this payment' state instead.", "testID": "payment-status-pending", "priority": "low"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "admin/payouts", "issues": ["Back button is 40x40, below the 44pt minimum (styles.iconBtn)", "'Try again' button on the error state has no testID"]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_nocturne_payments_fixes.py",
+    "/app/backend/tests/conftest.py",
+    "/app/backend/tests/test_nocturne_api.py",
+    "/app/backend/tests/test_nocturne_features.py",
+    "/app/backend/tests/test_nocturne_membership.py",
+    "/app/backend/tests/test_nocturne_rewards.py",
+    "/app/test_reports/pytest/pytest_results_iter8.xml"
+  ],
+  "action_items": [
+    "LOW: In create_checkout, run _quote before closing earlier open attempts, so a failed request does not cancel a valid open checkout.",
+    "LOW: Add date and service_type to the reservation 'same item' filter.",
+    "LOW: Award table and reservation points on the cash amount only (exclude reward credit), and store credit_used, as tickets already do.",
+    "LOW: payment-result: give 'Payment not found' its own state and copy.",
+    "LOW: admin/payouts: make the back button 44x44 and add testID 'payouts-retry' to 'Try again'.",
+    "DATA: seeded guest@ still has 900 points from 2 older 'Luxe · Onyx Black Car' points_ledger rows left by earlier test_nocturne_extras runs, and seeded promoter@ has wallet_balance -3.0 from an earlier run. Both were there before this iteration. The test cleanups are fixed now; reset these two seeded values if needed."
+  ],
+  "critical_code_review_comments": [
+    "Cent fix (+0.001) works for the values tested. Sending integer cents directly would be more robust, if the library allows it.",
+    "venue_payables are now written only inside issue_ticket, save_table and save_reservation, so every path is covered exactly once.",
+    "Before this iteration, the test_nocturne_features cleanup reset seeded users' level to bronze and wallet_balance to 0. This changed seeded data and has been removed. test_nocturne_extras leaked points to guest@, and test_nocturne_payments left venue_payables for deleted tickets. Both are fixed."
+  ],
+  "updated_files": [
+    "/app/backend/tests/conftest.py (skip list removed; helpers grant_credit, set_level, simulate_paid, run added; they only touch TEST_ users)",
+    "/app/backend/tests/test_nocturne_payments_fixes.py (new)",
+    "/app/backend/tests/test_nocturne_api.py",
+    "/app/backend/tests/test_nocturne_features.py",
+    "/app/backend/tests/test_nocturne_membership.py",
+    "/app/backend/tests/test_nocturne_rewards.py",
+    "/app/backend/tests/test_nocturne_payments.py (cleanup now also removes venue_payables)",
+    "/app/backend/tests/test_nocturne_extras.py (cleanup now undoes Luxe points given to guest@)"
+  ],
+  "success_rate": {"backend": "100% (110/110)", "frontend": "100% of the fix checks (6/6)"},
+  "seed_data_creation": "Only TEST_ users and records were created, and all were deleted by id. An accidental open Stripe ticket checkout for admin@ ($73.60) was cancelled and deleted. The 3 venue_payables and 3 guest@ points rows leaked by my own baseline runs (which used the old tests) were removed. Final state: 0 tickets, 0 venue_payables, 4 users, and the main agent's 6 payment_transactions untouched.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run with: pytest /app/backend/tests -n 0 (shared loop and class STATE). conftest.simulate_paid(session_id) runs payments._complete in-process to simulate Stripe 'paid'. Import order must be server, then payments, to avoid a circular import. Always use conftest.run() for coroutines, because motor binds to one loop. Stripe session expire returns 404 on the proxy, which is expected. Clicking the table map with force=True can hit the sticky 'Pay … Card' button and open a real Stripe checkout; click without force after scrollIntoView({block:'center'}).",
+  "rca_of_issue": ""
+}

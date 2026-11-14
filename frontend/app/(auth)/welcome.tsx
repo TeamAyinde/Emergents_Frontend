@@ -5,6 +5,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { LuxButton } from "@/src/ui";
+import { GoogleButton } from "@/src/google-button";
 import { colors, radius, spacing } from "@/src/theme";
 
 export default function Welcome() {
@@ -39,6 +40,7 @@ export default function Welcome() {
             <Perk label="1-month free for men" />
             <Perk label="Promoters earn on every guest" />
           </View>
+          <GoogleButton testID="welcome-google-btn" />
           <LuxButton
             testID="welcome-signup-btn"
             label="Create your account"

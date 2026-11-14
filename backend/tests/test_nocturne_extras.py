@@ -41,8 +41,15 @@ def future(days=7):
 
 @pytest.fixture(scope="module", autouse=True)
 def cleanup():
+    start = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=5)
     yield
     db = MongoClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
+    # partner-booking confirmation awards points to the seeded guest: undo exactly what this run added
+    g = db.users.find_one({"email": GUEST[0]}, {"id": 1})
+    rows = list(db.points_ledger.find({"user_id": g["id"], "reason": {"$regex": "^Luxe"}, "created_at": {"$gte": start}}))
+    if rows:
+        db.points_ledger.delete_many({"id": {"$in": [r["id"] for r in rows]}})
+        db.users.update_one({"id": g["id"]}, {"$inc": {"points": -sum(r["points"] for r in rows)}})
     for uid in CREATED["users"]:
         db.users.delete_one({"id": uid})
     for bid in CREATED["partner_bookings"]:

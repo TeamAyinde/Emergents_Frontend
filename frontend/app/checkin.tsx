@@ -1,7 +1,9 @@
 import { useRouter } from "expo-router";
-import { useState } from "react";
+import { CameraView, useCameraPermissions } from "expo-camera";
+import { useRef, useState } from "react";
 import {
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   StyleSheet,
@@ -26,13 +28,37 @@ export default function CheckIn() {
   const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
 
   const canScan = user?.role === "promoter" || user?.role === "venue_owner" || user?.role === "admin";
+  const [permission, requestPermission] = useCameraPermissions();
+  const [scanning, setScanning] = useState(false);
+  const [explain, setExplain] = useState(false);
+  const lock = useRef(false);
 
-  async function submit() {
-    if (!ticketId.trim()) return;
+  async function openCamera() {
+    if (permission?.granted) return setScanning(true);
+    if (permission && !permission.canAskAgain) return setExplain(true);
+    if (!explain) return setExplain(true);
+    const res = await requestPermission();
+    if (res.granted) {
+      setExplain(false);
+      setScanning(true);
+    }
+  }
+
+  async function onScanned(data: string) {
+    if (lock.current) return;
+    lock.current = true;
+    setScanning(false);
+    setTicketId(data);
+    await submit(data);
+    setTimeout(() => (lock.current = false), 1500);
+  }
+
+  async function submit(value = ticketId) {
+    if (!value.trim()) return;
     setBusy(true);
     setResult(null);
     try {
-      const t = await api.checkInTicket(ticketId.trim());
+      const t = await api.checkInTicket(value.trim());
       setResult({ ok: true, msg: `${t.event_title} · qty ${t.quantity}` });
     } catch (e) {
       setResult({ ok: false, msg: e instanceof Error ? e.message : "Failed" });
@@ -60,7 +86,46 @@ export default function CheckIn() {
           </View>
         ) : (
           <>
-            <Text style={styles.hint}>{"Type the code under the guest's QR (e.g. #32993EB1) or the full ticket ID."}</Text>
+            {scanning ? (
+              <View style={styles.cameraBox} testID="camera-view">
+                <CameraView
+                  style={StyleSheet.absoluteFill}
+                  facing="back"
+                  barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
+                  onBarcodeScanned={({ data }) => onScanned(data)}
+                />
+                <View style={styles.frame} />
+                <Pressable testID="camera-close" onPress={() => setScanning(false)} style={styles.camClose}>
+                  <FeatherIcon name="x" size={20} color={colors.onSurface} />
+                </Pressable>
+              </View>
+            ) : explain ? (
+              <View style={styles.explain} testID="camera-explain">
+                <FeatherIcon name="camera" size={28} color={colors.brandPrimary} />
+                <Text style={styles.explainTitle}>Scan tickets at the door</Text>
+                <Text style={styles.hint}>
+                  {permission && !permission.canAskAgain
+                    ? "Camera access is turned off. Enable it in Settings to scan guest QR codes, or type the code below."
+                    : "Nocturne uses the camera only to read guest QR codes for instant check-in."}
+                </Text>
+                {permission && !permission.canAskAgain ? (
+                  <LuxButton testID="camera-open-settings" label="Open Settings" onPress={() => Linking.openSettings()} />
+                ) : (
+                  <LuxButton testID="camera-allow" label="Allow camera" onPress={openCamera} />
+                )}
+                <Pressable testID="camera-not-now" onPress={() => setExplain(false)} style={{ paddingVertical: spacing.md }}>
+                  <Text style={styles.hint}>Not now</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <LuxButton
+                testID="camera-scan-btn"
+                label="Scan QR with camera"
+                onPress={openCamera}
+                icon={<FeatherIcon name="camera" size={16} color={colors.onBrandPrimary} />}
+              />
+            )}
+            <Text style={styles.hint}>{"Or type the code under the guest's QR (e.g. #32993EB1)."}</Text>
             <TextInput
               testID="checkin-input"
               value={ticketId}
@@ -74,7 +139,7 @@ export default function CheckIn() {
             <LuxButton
               testID="checkin-submit"
               label={busy ? "Checking…" : "Check in guest"}
-              onPress={submit}
+              onPress={() => submit()}
               loading={busy}
             />
             {result && (
@@ -95,13 +160,21 @@ export default function CheckIn() {
 }
 
 const styles = StyleSheet.create({
+  cameraBox: { height: 320, borderRadius: radius.lg, overflow: "hidden", backgroundColor: colors.surfaceSecondary, alignItems: "center", justifyContent: "center" },
+  frame: { width: 200, height: 200, borderRadius: radius.lg, borderWidth: 3, borderColor: colors.brandPrimary },
+  camClose: {
+    position: "absolute", top: spacing.md, right: spacing.md, width: 44, height: 44, borderRadius: 22,
+    backgroundColor: "rgba(9,9,11,0.6)", alignItems: "center", justifyContent: "center",
+  },
+  explain: { backgroundColor: colors.surfaceSecondary, borderRadius: radius.lg, padding: spacing.lg, gap: spacing.md, alignItems: "center", borderWidth: 1, borderColor: colors.border },
+  explainTitle: { color: colors.onSurface, fontSize: 18, fontWeight: "800" },
   root: { flex: 1, backgroundColor: colors.surface },
   header: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     paddingHorizontal: spacing.lg, paddingBottom: spacing.md,
   },
   closeBtn: {
-    width: 40, height: 40, borderRadius: 20, backgroundColor: colors.surfaceSecondary,
+    width: 44, height: 44, borderRadius: 22, backgroundColor: colors.surfaceSecondary,
     borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center",
   },
   title: { color: colors.onSurface, fontSize: 17, fontWeight: "700" },

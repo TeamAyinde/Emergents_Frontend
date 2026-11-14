@@ -9,6 +9,7 @@ import { useAuth } from "@/src/auth-context";
 import { Level, LEVEL_INFO } from "@/src/levels";
 import { colors, radius, spacing } from "@/src/theme";
 import { LuxButton } from "@/src/ui";
+import { startCheckout } from "@/src/payments";
 
 const ORDER: Level[] = ["bronze", "silver", "gold"];
 
@@ -27,11 +28,13 @@ export default function Membership() {
     setBusy(true);
     setMsg(null);
     try {
-      const prev = current;
+      if (ORDER.indexOf(selected) > ORDER.indexOf(current)) {
+        await startCheckout({ kind: "membership", level: selected }, router);
+        return;
+      }
       await api.upgrade(selected);
       await refresh();
-      const up = ORDER.indexOf(selected) > ORDER.indexOf(prev);
-      setMsg({ ok: true, text: up ? `You're now ${LEVEL_INFO[selected].label}. Enjoy the upgrade.` : `You've moved to ${LEVEL_INFO[selected].label}.` });
+      setMsg({ ok: true, text: `You've moved to ${LEVEL_INFO[selected].label}.` });
     } catch (e) {
       setMsg({ ok: false, text: e instanceof Error ? e.message : "Try again" });
     } finally {
@@ -91,13 +94,19 @@ export default function Membership() {
         {!business ? (
           <LuxButton
             testID="membership-change-btn"
-            label={busy ? "Updating…" : selected === current ? "Your current plan" : `Switch to ${LEVEL_INFO[selected].label}`}
+            label={
+              busy ? "Updating…"
+                : selected === current ? "Your current plan"
+                  : ORDER.indexOf(selected) > ORDER.indexOf(current)
+                    ? `Pay $${LEVEL_INFO[selected].price} · Upgrade to ${LEVEL_INFO[selected].label}`
+                    : `Switch to ${LEVEL_INFO[selected].label}`
+            }
             disabled={selected === current}
             onPress={onChange}
             loading={busy}
           />
         ) : null}
-        <Text style={styles.hint}>Payments are simulated in this preview. Real billing comes next.</Text>
+        <Text style={styles.hint}>Secure card payment by Stripe · billed for 30 days of access.</Text>
       </ScrollView>
     </View>
   );
