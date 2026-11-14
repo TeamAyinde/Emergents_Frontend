@@ -333,7 +333,13 @@ async def current_user(
 def user_level(u: dict) -> str:
     if u.get("role") in ("admin", "venue_owner"):
         return "gold"
-    return u.get("level", "bronze")
+    base = u.get("level", "bronze")
+    until = u.get("gift_until")
+    if until and (until if until.tzinfo else until.replace(tzinfo=timezone.utc)) > datetime.now(timezone.utc):
+        gift = u.get("gift_level", "bronze")
+        if LEVEL_RANK.get(gift, 0) > LEVEL_RANK.get(base, 0):
+            return gift  # a friend's gifted month
+    return base
 
 
 def require_level(u: dict, min_level: str) -> None:
@@ -883,6 +889,7 @@ from features import ensure_feature_indexes, router as features_router  # noqa: 
 from rewards import router as rewards_router  # noqa: E402
 from payments import router as payments_router  # noqa: E402
 from billing import router as billing_router  # noqa: E402
+from growth import router as growth_router  # noqa: E402
 
 app.include_router(api)
 app.include_router(extras_router)
@@ -890,6 +897,7 @@ app.include_router(features_router)
 app.include_router(rewards_router)
 app.include_router(payments_router)
 app.include_router(billing_router)
+app.include_router(growth_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -906,6 +914,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 async def _startup():
     app.state.index_task = asyncio.create_task(ensure_indexes())
     app.state.feature_index_task = asyncio.create_task(ensure_feature_indexes())
+    app.state.gift_index_task = asyncio.ensure_future(db.gifts.create_index("code", unique=True, name="gift_code"))
     # seed in background so boot is not blocked
     from seed import seed_all  # local
     app.state.seed_task = asyncio.create_task(seed_all(db))

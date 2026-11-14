@@ -73,6 +73,7 @@ export default function PaymentResult() {
     if (st?.kind === "ticket" && st.result_id) router.replace(`/ticket/${st.result_id}`);
     else if (st?.kind === "boost") router.replace("/host");
     else if (st?.kind === "spotlight") router.replace("/(tabs)");
+    else if (st?.kind === "gift") router.replace("/gifts");
     else router.replace("/(tabs)/profile");
   }
 
@@ -117,7 +118,7 @@ export default function PaymentResult() {
         {status === "paid" ? (
           <LuxButton
             testID="payment-continue-btn"
-            label={st?.kind === "ticket" ? "View my ticket" : st?.kind === "membership" ? "Go to my profile" : st?.kind === "boost" ? "Back to Host Studio" : st?.kind === "spotlight" ? "See it on the feed" : "See my booking"}
+            label={st?.kind === "ticket" ? "View my ticket" : st?.kind === "membership" ? "Go to my profile" : st?.kind === "boost" ? "Back to Host Studio" : st?.kind === "spotlight" ? "See it on the feed" : st?.kind === "gift" ? "Get the gift code" : "See my booking"}
             onPress={goToResult}
           />
         ) : (

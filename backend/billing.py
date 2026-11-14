@@ -223,6 +223,11 @@ async def quote_spotlight(event_id: str, plan: str, user: dict) -> dict:
     ev_date = ev["date"] if ev["date"].tzinfo else ev["date"].replace(tzinfo=timezone.utc)
     if ev_date < _now():
         raise HTTPException(400, "This event has already happened")
+    from growth import spotlight_check  # noqa: E402
+
+    ok, reason, _ = await spotlight_check(event_id, user)
+    if not ok:
+        raise HTTPException(403, reason)
     price, days = SPOTLIGHT_PLANS[plan]
     return {"total": price, "label": f"Spotlight · {ev['title']} · {days} days", "venue_id": None,
             "payload": {"event_id": event_id, "plan": plan}, "no_credit": True}
@@ -230,6 +235,12 @@ async def quote_spotlight(event_id: str, plan: str, user: dict) -> dict:
 
 async def apply_spotlight(tx: dict) -> str:
     p = tx["payload"]
+    from growth import spotlight_check  # noqa: E402 — re-check the daily cap when the payment lands
+
+    user = await db.users.find_one({"id": tx["user_id"]}, {"_id": 0})
+    ok, reason, _ = await spotlight_check(p["event_id"], user)
+    if not ok:
+        raise HTTPException(409, reason)
     _, days = SPOTLIGHT_PLANS[p["plan"]]
     ev = await db.events.find_one({"id": p["event_id"]}, {"_id": 0, "spotlight_until": 1})
     cur = (ev or {}).get("spotlight_until")

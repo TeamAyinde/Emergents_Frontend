@@ -77,3 +77,9 @@ Money-making hospitality app (founder has construction/club/nightlife/lounge/res
 - Gold yearly plan $1,490/year (Stripe yearly subscription); monthly/yearly toggle on Gold
 - Promoter Event Spotlight $39/3 days, $79/7 days; spotlighted events top of feed with SPOTLIGHT badge
 - STILL PENDING: real Stripe secret key (user skipped secure card twice; key pasted in chat was masked and unusable)
+
+## Iteration 12 — Leaderboard, Spotlight limits, Gifts (growth.py)
+- Monthly promoter leaderboard by guests (/api/promoter/leaderboard/monthly); last month's winner auto-awarded $100 wallet bonus once (leaderboard_awards _id=month)
+- Spotlight: promoter must have brought ≥1 guest with their code to that event; cap 2 spotlights/day (/api/spotlight/eligibility/{id})
+- Gift memberships: checkout kind=gift (Silver $49 / Gold $149, 1 month) → GIFT-XXXXXX code; /api/gifts/mine, /api/gifts/redeem; user_level honours active gift_level/gift_until. Screen /gifts (Profile → Gifts)
+- Saved STRIPE_API_KEY (both slots) starts with mk_ — not a Stripe secret key; app keeps using test proxy until an sk_/rk_ key is saved

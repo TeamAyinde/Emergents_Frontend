@@ -196,6 +196,12 @@ export const api = {
   markWithdrawalPaid: (id: string) => request<{ ok: boolean }>(`/admin/withdrawals/${id}/paid`, { method: "POST" }),
   hostPayouts: () => request<{ owed: number; paid: number }>("/host/payouts"),
   hostEarnings: () => request<HostEarnings>("/host/earnings"),
+  monthlyLeaderboard: () => request<MonthlyBoard>("/promoter/leaderboard/monthly"),
+  spotlightEligibility: (eventId: string) =>
+    request<{ eligible: boolean; reason: string; remaining_today: number }>(`/spotlight/eligibility/${eventId}`),
+  myGifts: () => request<Gift[]>("/gifts/mine"),
+  redeemGift: (code: string) =>
+    request<{ level: string; until: string }>("/gifts/redeem", { method: "POST", body: JSON.stringify({ code }) }),
   subscription: () => request<Subscription>("/membership/subscription"),
   setRenewal: (action: "cancel" | "resume") =>
     request<Subscription>(`/membership/subscription/${action}`, { method: "POST" }),
@@ -337,7 +343,17 @@ export type CheckoutBody =
   | { kind: "reservation"; venue_id: string; date: string; party_size: number; service_type: string; notes?: string }
   | { kind: "membership"; level: string; interval?: "month" | "year" }
   | { kind: "boost"; venue_id: string; plan: "week" | "month" }
-  | { kind: "spotlight"; event_id: string; plan: "3days" | "week" };
+  | { kind: "spotlight"; event_id: string; plan: "3days" | "week" }
+  | { kind: "gift"; level: "silver" | "gold"; recipient_email?: string; note?: string };
+export type MonthlyBoard = {
+  month: string; bonus: number;
+  entries: { user_id: string; full_name: string; guests: number; earnings: number }[];
+  last_winner: { month: string; full_name: string; guests: number; bonus: number } | null;
+};
+export type Gift = {
+  id: string; code: string; level: string; days: number; recipient_email: string | null; note: string | null;
+  redeemed: boolean; redeemed_by_name: string | null; created_at: string;
+};
 export type HostEarnings = {
   owed: number; paid: number;
   by_source: Record<string, { count: number; amount: number }>;

@@ -28,9 +28,10 @@ export default function Promote() {
     enabled: !!isPromoter,
   });
   const { data: board } = useQuery({
-    queryKey: ["leaderboard"],
-    queryFn: () => api.leaderboard(),
+    queryKey: ["leaderboard-monthly"],
+    queryFn: () => api.monthlyLeaderboard(),
   });
+  const monthName = board ? new Date(`${board.month}-01T12:00:00Z`).toLocaleDateString("en", { month: "long" }) : "";
 
   const code = user?.referral_code ?? "—";
   const shareLink = `https://nocturne.app/r/${code}`;
@@ -89,9 +90,20 @@ export default function Promote() {
         )}
 
         <View>
-          <Text style={styles.sectionTitle}>Leaderboard</Text>
+          <Text style={styles.sectionTitle}>{monthName ? `${monthName} leaderboard` : "Leaderboard"}</Text>
+          <Text style={styles.boardHint} testID="leaderboard-bonus">
+            Most guests this month wins a ${board?.bonus ?? 100} bonus, paid into their wallet.
+          </Text>
+          {board?.last_winner ? (
+            <View style={styles.winner} testID="last-winner">
+              <FeatherIcon name="award" size={16} color={colors.brandPrimary} />
+              <Text style={styles.winnerText}>
+                Last month: {board.last_winner.full_name} · {board.last_winner.guests} guests · won ${board.last_winner.bonus}
+              </Text>
+            </View>
+          ) : null}
           <FlatList
-            data={board ?? []}
+            data={board?.entries ?? []}
             keyExtractor={(i) => i.user_id}
             scrollEnabled={false}
             ItemSeparatorComponent={() => <View style={styles.sep} />}
@@ -99,10 +111,10 @@ export default function Promote() {
               <View style={styles.row} testID={`leaderboard-row-${index}`}>
                 <Text style={styles.rank}>{index + 1}</Text>
                 <Text style={styles.rowName}>{item.full_name}</Text>
-                <Text style={styles.rowEarn}>${item.earnings.toFixed(2)}</Text>
+                <Text style={styles.rowEarn}>{item.guests} {item.guests === 1 ? "guest" : "guests"}</Text>
               </View>
             )}
-            ListEmptyComponent={<Text style={styles.empty}>No promoters yet — be the first.</Text>}
+            ListEmptyComponent={<Text style={styles.empty}>No guests yet this month — be the first.</Text>}
           />
         </View>
       </ScrollView>
@@ -121,6 +133,12 @@ function Stat({ label, value, testID, accent }: { label: string; value: string; 
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.surface },
+  boardHint: { color: colors.muted, fontSize: 13, marginTop: -spacing.xs, marginBottom: spacing.sm },
+  winner: {
+    flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: colors.surfaceSecondary,
+    borderRadius: radius.md, padding: spacing.md, marginBottom: spacing.sm, borderWidth: 1, borderColor: colors.brandPrimary,
+  },
+  winnerText: { color: colors.onSurface, fontSize: 13, fontWeight: "600", flex: 1 },
   eyebrow: { color: colors.brandPrimary, fontSize: 11, letterSpacing: 2, fontWeight: "700" },
   title: { color: colors.onSurface, fontSize: 28, fontWeight: "800", marginTop: 4 },
   upgrade: {

@@ -14,12 +14,13 @@ import json
 import stripe
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 
 from billing import (
     YEARLY_PRICE, activate_subscription, apply_boost, apply_spotlight, quote_boost, quote_spotlight, send_transfer, subscription_params, sync_account_id,
     sync_subscription_id, trial_eligible,
 )
+from growth import create_gift, quote_gift
 from features import approved_request, quote_table, save_table
 from server import (
     LEVEL_PRICE, LEVEL_RANK, ReservationIn, amount_due, current_user, db, issue_ticket,
@@ -39,7 +40,7 @@ def _now():
 
 
 class CheckoutIn(BaseModel):
-    kind: Literal["ticket", "table", "reservation", "membership", "boost", "spotlight"]
+    kind: Literal["ticket", "table", "reservation", "membership", "boost", "spotlight", "gift"]
     origin_url: str = Field(max_length=300)
     return_url: Optional[str] = Field(default=None, max_length=300)  # native deep link
     event_id: Optional[str] = None
@@ -54,6 +55,8 @@ class CheckoutIn(BaseModel):
     level: Optional[str] = None
     plan: Optional[str] = None  # boost: week | month · spotlight: 3days | week
     interval: Literal["month", "year"] = "month"  # membership billing
+    recipient_email: Optional[EmailStr] = None  # gift
+    note: Optional[str] = Field(default=None, max_length=200)  # gift message
 
 
 class CheckoutOut(BaseModel):
@@ -118,6 +121,8 @@ async def _quote(body: CheckoutIn, user: dict) -> dict:
         return await quote_boost(body.venue_id or "", body.plan or "", user)
     if body.kind == "spotlight":
         return await quote_spotlight(body.event_id or "", body.plan or "", user)
+    if body.kind == "gift":
+        return quote_gift(body.level, body.recipient_email, body.note)
     # membership: monthly subscription, auto-renews
     if body.level not in LEVEL_RANK:
         raise HTTPException(400, "Unknown level")
@@ -165,6 +170,8 @@ async def _fulfil(tx: dict, payment_session: Optional[str]) -> str:
         return await apply_boost(tx)
     if tx["kind"] == "spotlight":
         return await apply_spotlight(tx)
+    if tx["kind"] == "gift":
+        return await create_gift(tx)
     return await activate_subscription(tx, payment_session)
 
 

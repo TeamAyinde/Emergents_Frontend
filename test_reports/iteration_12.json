@@ -1,0 +1,55 @@
+{
+  "summary": "Iteration 12. All 3 new features work end to end: the monthly promoter leaderboard with its $100 winner bonus, the spotlight eligibility rule with its daily cap, and gift memberships. Backend: the new file test_nocturne_iter12.py has 17 tests and 16 pass. The 1 failure is a real bug: redeeming a lower-level gift shortens an existing Gold gift. The iteration 11 spotlight tests are updated for the new rule; they now seed a TEST_ ticket with promoter_id. The full suite, run serially with -n 0, gives 180 passed and 1 failed (the same gift bug). Verified by API: the leaderboard lists only promoters and only this month's tickets, and the guests and earnings sums are correct. A seeded last-month winner gets wallet +100 exactly once over 3 calls, with 1 leaderboard_awards doc. Spotlight eligibility: a promoter with no ticket from their own code gets eligible=false and checkout returns 403 with the reason. After a real ticket checkout with code MARCO1 the promoter is eligible with remaining_today 2. With 2 spotlights already today, eligibility and checkout both return 'Daily limit reached'. A guest gets eligible false. Admin is exempt. Gifts: Gold costs $149 and Silver $49. Bronze returns 400 and an invalid email 422. The recipient email is lower-cased and the note trimmed. A paid gift creates a GIFT-XXXXXX code (11 chars). Redeeming it by another user sets gold until +30d, and /auth/me then shows level gold. Redeeming again gives 409, your own code 400, an unknown code 404, and no login 401. Two gold gifts stack to 60 days. E2E at 390px with Stripe card 4242: Gifts screen -> Gold with email and note -> Stripe shows 'Gift · Nocturne Gold · 1 month $149.00' -> Payment confirmed -> 'Get the gift code' -> /gifts lists GIFT-771850 with the email and a share button. A TEST_ user redeemed it in the UI and saw 'Enjoy Gold until Dec 14.'; Profile then showed GOLD MEMBER. Redeeming again showed 'This gift has already been redeemed'. Promote tab: 'November leaderboard', leaderboard-bonus, a last-winner banner and a row 'Marco Promo · 2 guests'. Event detail for the promoter: spotlight-blocked shows the reason and the buttons are disabled (aria-disabled), or it shows '2 left today' with enabled buttons that open Stripe at $39. After the cap is reached it shows 'Daily limit reached — 2 spotlights per day'. A guest sees no spotlight-card. No deprecated Expo packages detected. No SafeAreaView issues detected.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/gifts/redeem (growth.py:170-173)", "issue": "CONFIRMED BUG: if the user has an active gift of a higher level, redeeming a lower one sets until = now + 30d and does not keep the later end date. Reproduced: Gold stacked to 2027-01-13, then a Silver gift was redeemed, and Gold now ends 2026-12-14 (30 days lost). Fix: when keep is true, until = max(cur_until, now + days), or extend cur_until."},
+      {"endpoint": "_rank / _award_last_month (growth.py:53-58, 67)", "issue": "The $limit runs before the role=promoter filter. Tickets can carry a promoter_id that belongs to a venue_owner or admin (issue_ticket accepts their codes). If such a user tops last month, _rank(last, 1) returns [] and no award doc is written. The real top promoter is then never paid, and every call repeats the check. The current board can also return fewer than 20 rows. Fix: $lookup or $match on the promoter ids before $limit."},
+      {"endpoint": "POST /api/gifts/redeem", "issue": "The code is used up even when it gives nothing: a paid Gold member who redeems Silver, or any venue_owner or admin (user_level returns gold for them). Return 400 with a message instead of spending the gift."},
+      {"endpoint": "spotlight daily cap (growth.py:91-102, billing.py apply_spotlight)", "issue": "The cap is checked only when the checkout is created. A promoter can open checkouts on 2 or 3 different events (only same-event sessions get closed) and pay them all, ending with more than 2 a day. apply_spotlight does not check again."},
+      {"endpoint": "db.gifts", "issue": "There is no unique index on code (token_hex(3) gives about 16.7M values) and no index on buyer_id. Add a unique index and retry on DuplicateKeyError."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Leaderboard row", "issue": "It always shows '{n} guests', so a single guest reads '1 guests'. Reference: /app/frontend/app/(tabs)/promote.tsx:114", "testID": "leaderboard-row-0", "priority": "LOW"},
+      {"component": "Gift buy error", "issue": "An invalid friend's email shows only the generic 'Please check your inputs' (from the 422). Validate the email on the client or show 'Enter a valid email'. Reference: /app/frontend/app/gifts.tsx:90", "testID": "gift-buy-btn", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Promote", "issues": ["The stat 'Rank #2' is the all-time rank, but the monthly board right below shows the same promoter at #1. Label it 'All-time rank' or use the monthly position."]},
+      {"screen": "Event detail SpotlightCard", "issues": ["If the eligibility query fails, the buttons stay disabled with no message (blocked defaults to true). Add an error or retry state.", "The card sits behind the sticky 'Unlock with Gold/Silver' footer at some scroll positions. Taps there hit the footer, which is expected behaviour and fine once scrolled; noted only."]},
+      {"screen": "Gifts / Profile", "issues": ["The Gifts list has no loading or error state.", "After redeeming, Profile shows 'GOLD MEMBER' with nothing saying it is a gifted month or when it ends."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_nocturne_iter12.py",
+    "/app/backend/tests/test_nocturne_iter11.py",
+    "/app/test_reports/pytest/iter12.xml",
+    "/app/test_reports/pytest/full_iter12.xml"
+  ],
+  "action_items": [
+    "growth.py:170-173: keep the later end date when a lower or equal level gift is redeemed on top of an active higher gift (until = max(cur_until, now + 30d)). test_gift_lower_level_does_not_shorten_existing_gold must pass.",
+    "growth.py _rank: filter to role=promoter before $limit (lookup users first, or pass the promoter ids into $match), so the winner award cannot be skipped.",
+    "growth.py redeem: reject (400) a gift that gives no upgrade (the user's level is already >= the gift level, or the account is venue/admin) instead of using up the code.",
+    "Optional: re-check the daily cap in apply_spotlight, or count open initiated spotlight checkouts toward the cap. Add a unique index on gifts.code.",
+    "promote.tsx:114: write '1 guest' for a single guest. gifts.tsx: show a clear invalid-email message. Show the gift end date on Profile or Membership."
+  ],
+  "critical_code_review_comments": [
+    "The award is idempotent: _id is the month and a DuplicateKeyError means it was already paid. The wallet $inc runs only after the insert succeeds. Verified exactly one +100 over repeated calls.",
+    "The award is triggered lazily by a public, unauthenticated GET. That is acceptable, but the wallet write depends on someone opening the leaderboard. Consider a startup or cron hook.",
+    "user_level applies gift_level only while gift_until is in the future and only when it is higher than the base level. require_level and the ticket discounts pick it up automatically.",
+    "quote_gift uses no_credit, so reward credit cannot buy gifts. The recipient email is normalised and the note is capped at 200 characters."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_nocturne_iter12.py (new, 17 tests)",
+    "/app/backend/tests/test_nocturne_iter11.py (future_event fixture now seeds a TEST_ ticket with promoter_id, dated 400 days ago so it does not affect leaderboards; removed at teardown)"
+  ],
+  "success_rate": {"backend": "16/17 iter12 tests pass (94%); full suite 180/181 with -n 0", "frontend": "100% of the requested flows work; 2 low-priority copy bugs"},
+  "seed_data_creation": "None kept. Removed by id: 2 TEST_ tickets, 2 TEST_ spotlights, the 2026-10 leaderboard_awards doc and the TEST_ winner user (created twice: once during the first test run, where the 40-days-ago ticket accidentally fell in October, and once for the UI check; both cleaned). Also removed gift GIFT-771850 bought by guest@nocturne.app in the UI, its 4 gift payment_transactions (3 cancelled and 1 paid), 1 promoter spotlight checkout (cancelled through the API, then deleted) and the TEST_ redeemer user. Final state: gifts 0, awards 0, spotlights 0, no TEST_ tickets or users, no events spotlighted. guest@nocturne.app is still level bronze with no gift fields. The promoter wallet is -16.2, the same as before I started (pre-existing; I did not create it).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "The container date is Nov 2026, so 'last month' is 2026-10. Seeded tickets must be more than about 45 days back to fall outside last month. Run the full suite with setsid nohup ... -n 0 & and poll /tmp/*.log; it takes about 5.5 min. On Stripe Checkout the card inputs are inside the js.stripe.com elements iframe: #payment-numberInput, #payment-expiryInput, #payment-cvcInput, #payment-nameInput, #payment-postalCodeInput. The submit is button[type=submit] in the same frame. The event detail sticky footer can catch force-clicks on the SpotlightCard; scrollIntoView({block:'center'}) first.",
+  "rca_of_issue": "Gift shortening: redeem_gift computes start = now whenever the levels differ, and until = start + 30d, even when keep is true, so the stored gift_until can move earlier."
+}

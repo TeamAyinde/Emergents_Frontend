@@ -22,7 +22,7 @@ VENUE = ("venue@nocturne.app", "VenuePass123!")
 PROMOTER = ("promoter@nocturne.app", "PromoterPass123!")
 GUEST = ("guest@nocturne.app", "GuestPass123!")
 ADMIN = ("admin@nocturne.app", "AdminPass123!")
-C = {"users": [], "sessions": set(), "events": [], "payables": [], "spot_restore": {}}
+C = {"users": [], "sessions": set(), "events": [], "payables": [], "spot_restore": {}, "tickets": []}
 
 _raw = (os.environ.get("STRIPE_API_KEY") or "").strip()
 _OWN = _raw.startswith(("sk_", "rk_")) and "emergent" not in _raw
@@ -76,6 +76,7 @@ def cleanup():
         else:
             DB.events.update_one({"id": eid}, {"$set": {"spotlight_until": orig["until"], "spotlight_by": orig["by"]}})
     DB.events.delete_many({"id": {"$in": C["events"]}})
+    DB.tickets.delete_many({"id": {"$in": C["tickets"]}})
     DB.venue_payables.delete_many({"id": {"$in": C["payables"]}})
     DB.user_sessions.delete_many({"user_id": {"$in": C["users"]}})
     DB.users.delete_many({"id": {"$in": C["users"]}})
@@ -91,7 +92,14 @@ def future_event():
     r = requests.get(f"{API}/events")
     assert r.status_code == 200 and r.json()
     # pick the last (lowest-ranked) event so pinning it to the top is observable
-    return r.json()[-1]
+    ev = r.json()[-1]
+    # iteration 12 rule: promoters can only spotlight events they've brought >=1 guest to (seed a TEST_ ticket)
+    pid = DB.users.find_one({"email": PROMOTER[0]})["id"]
+    tid = f"TEST_{uuid.uuid4()}"
+    DB.tickets.insert_one({"id": tid, "event_id": ev["id"], "user_id": f"TEST_{uuid.uuid4()}", "promoter_id": pid,
+                           "quantity": 1, "promoter_earning": 0.0, "created_at": datetime.now(timezone.utc) - timedelta(days=400)})
+    C["tickets"].append(tid)
+    return ev
 
 
 # ---------- Gold yearly subscription ----------

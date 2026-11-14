@@ -124,6 +124,17 @@ export default function Profile() {
         </View>
         ) : null}
 
+        <Pressable testID="gifts-btn" onPress={() => router.push("/gifts")} style={styles.prefRow}>
+          <View style={styles.rowIcon}>
+            <FeatherIcon name="gift" size={16} color={colors.brandPrimary} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowTitle}>Gifts</Text>
+            <Text style={styles.rowSub}>Gift a month of Silver or Gold, or redeem a code</Text>
+          </View>
+          <FeatherIcon name="chevron-right" size={18} color={colors.muted} />
+        </Pressable>
+
         {isStaff && user?.role !== "admin" ? (
           <Pressable testID="bank-payouts-btn" onPress={() => router.push("/payout-settings")} style={styles.prefRow}>
             <View style={styles.rowIcon}>

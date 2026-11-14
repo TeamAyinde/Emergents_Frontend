@@ -1,8 +1,10 @@
+import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import FeatherIcon from "@react-native-vector-icons/feather";
 
+import { api } from "./api";
 import { startCheckout } from "./payments";
 import { colors, radius, spacing } from "./theme";
 
@@ -16,6 +18,8 @@ export function SpotlightCard({ eventId, active }: { eventId: string; active?: b
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState("");
+  const { data: elig, error: eligError } = useQuery({ queryKey: ["spotlight-elig", eventId], queryFn: () => api.spotlightEligibility(eventId) });
+  const blocked = elig ? !elig.eligible : true;
 
   async function buy(plan: "3days" | "week") {
     setErr("");
@@ -36,14 +40,20 @@ export function SpotlightCard({ eventId, active }: { eventId: string; active?: b
         <Text style={styles.title}>{active ? "Spotlighted — extend it" : "Spotlight this event"}</Text>
       </View>
       <Text style={styles.sub}>Pin it to the top of the home feed for every guest and fill the list faster.</Text>
+      {eligError ? <Text style={styles.err}>Could not check spotlight availability. Please try again.</Text> : null}
+      {elig && !elig.eligible ? (
+        <Text style={styles.sub} testID="spotlight-blocked">{elig.reason}</Text>
+      ) : elig ? (
+        <Text style={styles.sub} testID="spotlight-remaining">{elig.remaining_today} left today</Text>
+      ) : null}
       <View style={styles.row}>
         {PLANS.map((p) => (
           <Pressable
             key={p.plan}
             testID={`spotlight-${p.plan}`}
-            disabled={!!busy}
+            disabled={!!busy || blocked}
             onPress={() => buy(p.plan)}
-            style={[styles.plan, busy && busy !== p.plan && { opacity: 0.5 }]}
+            style={[styles.plan, ((busy && busy !== p.plan) || blocked) && { opacity: 0.5 }]}
           >
             <Text style={styles.price}>{busy === p.plan ? "Opening…" : `$${p.price}`}</Text>
             <Text style={styles.label}>{p.label}</Text>
