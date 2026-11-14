@@ -1,0 +1,60 @@
+{
+  "summary": "First full run. Backend: 16 pytest cases (14 core all PASS; 2 validation-gap probes FAIL). All requested core flows work end-to-end on web preview (390x844): welcome -> sign in (guest prefilled) -> home feed -> event details -> qty/promoter code MARCO1 -> buy -> ticket QR; venues search -> venue -> service -> reserve -> reservation-success; profile tickets/reservations/wallet/sign out; sign-up role->tier->form->home; promoter Promote tab (stats, referral code, QR, leaderboard), scan -> check-in (success + 'Already checked in'). Fee math verified (15% fee, promoter 40% of fee, wallet increments, $2 withdrawal fee). Main bugs: home category chips do not filter, membership tier is self-assignable (free premium/corporate), reservation price/party size are client-controlled with no validation (negative totals accepted and shown in UI). Payments are MOCKED (simulated).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/reservations", "issue": "Client sets base_price and there is no validation: base_price=-100, party_size=-3, service_type='x' returns 201 with total -115, and Profile shows '$-115'. The price should come from the server based on venue and service_type; party_size>=1 and service_type should be an enum.", "priority": "HIGH"},
+      {"endpoint": "POST /api/auth/register", "issue": "Users can pick any membership_tier, including premium, corporate and venue, and get 201. Anyone can give themselves a paid tier for free. Only free_girl and trial_male (or member) should be self-selectable; premium needs payment and venue/corporate need an admin.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "POST /api/promoter/withdraw", "issue": "Not atomic: balance check and $inc are separate, so parallel requests can push the wallet negative. Use find_one_and_update with filter wallet_balance>=amount. Any role (including guest) can call it."},
+      {"endpoint": "POST /api/tickets/{id}/checkin", "issue": "Not atomic (two parallel check-ins can both succeed). Use update_one({id, checked_in:false}). Any promoter can also check in tickets for any venue or event; there is no ownership scope."},
+      {"endpoint": "POST /api/tickets/purchase", "issue": "No upper limit on quantity. Tickets can be bought for past events. A promoter can use their own MARCO1 code on their own purchases and earn from them. An invalid promoter_code is silently ignored (no feedback to the user)."},
+      {"endpoint": "POST /api/events", "issue": "price is not validated (negative values allowed). A venue_owner can create events for any venue, not only their own."},
+      {"endpoint": "GET /api/venues?q=", "issue": "q goes into $regex without re.escape, so regex injection / ReDoS is possible."},
+      {"endpoint": "GET /api/promoter/leaderboard", "issue": "N+1 user lookups. Use $lookup or a single $in query."},
+      {"endpoint": "server startup", "issue": "@app.on_event is deprecated; use a lifespan handler."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Home category chips", "issue": "The category state is set but never used to filter events. Tapping 'Tonight', 'Rooftop' and the others still shows every card (9 → 9). Reference: app/(tabs)/index.tsx:29", "testID": "chip-*", "priority": "HIGH"},
+      {"component": "Check-in input", "issue": "The ticket screen shows the short code '#32993EB1', but entering it on the check-in screen returns 'Not Found'; only the full UUID works. Accept the short code (or strip '#' and match a prefix), or add camera QR scanning (expo-camera), since the button is labelled scan.", "testID": "checkin-input", "priority": "MEDIUM"},
+      {"component": "Profile withdraw", "issue": "Always withdraws the full cached user.wallet_balance and has no amount input. With $0 the button stays enabled and shows 'Amount must be positive'. Disable it when balance <= $2. The wallet value is only refreshed after a withdraw, so it goes stale after new sales.", "testID": "withdraw-btn", "priority": "MEDIUM"},
+      {"component": "Home scan button", "issue": "The scan button is shown to guests. Check-in only works for promoter, venue_owner and admin, so hide it for guests.", "testID": "scan-btn", "priority": "LOW"},
+      {"component": "Scan navigation (flaky)", "issue": "Once, tapping scan-btn right after switching back from the Promote tab did not navigate. It worked on 3 other attempts.", "testID": "scan-btn", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Profile", "issues": ["The Withdraw gradient does not fill its Pressable (box 166px wide, gradient about 118px), and it has square corners while every other CTA is a rounded pill. It looks broken."]},
+      {"screen": "Venues / Event / Sign-in inputs", "issues": ["On web, TextInputs get a white rectangular browser focus outline inside the rounded field (visible on venue-search). Add outlineStyle:'none' for web."]},
+      {"screen": "Profile", "issues": ["The tier badge shows the raw key 'FREE GIRL'. Use friendly labels such as 'Free · Women'."]},
+      {"screen": "Sign-up role step", "issues": ["The copy says 'you can switch later', but there is no way to switch roles."]},
+      {"screen": "Event details", "issues": ["Seeded event times are relative to now (for example 3:32 AM), which looks odd for nightlife. Seed fixed evening times instead."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_nocturne_api.py", "/app/backend/tests/cleanup_iteration1.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Calculate reservation prices on the server from venue and service_type. Validate party_size>=1, service_type as an enum, and base_price>0 using Pydantic Field constraints.",
+    "Restrict membership_tier at registration to the free or trial tiers (block premium, corporate and venue unless paid or set by an admin).",
+    "Implement the home chip filter (Tonight, This Week, and category/tags such as Rooftop, Nightclub, Lounge, VIP).",
+    "Make withdraw and check-in atomic with conditional updates. Limit withdraw to promoter-type roles.",
+    "Let check-in accept the short ticket code shown on the ticket, or add QR scanning via expo-camera.",
+    "Fix the Withdraw button styling. Disable it when balance <= $2. Refresh the wallet (/auth/me) when the Profile screen gets focus.",
+    "Hide scan-btn for guests. Escape the regex in venue search. Validate ticket quantity (1-20) and reject past events.",
+    "Remove the hardcoded guest credentials prefilled on the sign-in screen before production."
+  ],
+  "critical_code_review_comments": [
+    "sign-in.tsx:23-24 prefills real guest credentials. That is fine for a demo but must be removed for production.",
+    "Payments are MOCKED: purchase, reservation and withdraw only write records, and the withdraw message says 'Sent ... to your bank'.",
+    "Promoter stats are aggregated from tickets but the wallet is a separate counter. They diverge after withdrawals, which is expected, but label them clearly (Total earned vs Available).",
+    "No deprecated Expo packages (expo-av, expo-barcode-scanner, expo-background-fetch) were found. No raw HTML elements or className usage were found."
+  ],
+  "updated_files": ["/app/backend/tests/test_nocturne_api.py", "/app/backend/tests/cleanup_iteration1.py"],
+  "success_rate": {"backend": "88% (14/16; 100% of core functional tests)", "frontend": "~90% (all requested flows pass; chip filter broken; short-code check-in unsupported)"},
+  "seed_data_creation": "No seed data created. The tests created TEST_ users, a TEST_Event, guest tickets and reservations; all were removed by exact id via cleanup_iteration1.py (records created in the last 10 min) and event tickets_sold was decremented. The seeded promoter wallet went 0 -> 9.60 -> 6.60 (API withdraw $3) -> 0.00 (UI withdraw), so it ended back at its seed value.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run: export EXPO_PUBLIC_BACKEND_URL from frontend/.env and pytest backend/tests/test_nocturne_api.py. The TestValidationGaps tests are expected to pass once the validation fixes land. Note that the system clock is Nov 2026. The frontend env var is EXPO_PUBLIC_BACKEND_URL (not EXPO_BACKEND_URL). Checking in needs the full ticket UUID (the ticket URL /ticket/{uuid}).",
+  "rca_of_issue": "Chips: in (tabs)/index.tsx the category useState is only used for chip highlighting and never applied to the events list. Tier and reservation gaps: the RegisterIn and ReservationIn Pydantic models have no constraints, and the server trusts the client's base_price."
+}

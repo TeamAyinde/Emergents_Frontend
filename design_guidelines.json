@@ -1,0 +1,201 @@
+{
+  "app_name": "Nocturne",
+  "personality": "6 Glass / Luxe DARK",
+  "personality_one_liner": "A cinematic, exclusive, and high-energy nightlife experience where glassmorphism and deep shadows meet glowing amber and crimson accents.",
+  "color": {
+    "surface": "#09090B",
+    "onSurface": "#FAFAFA",
+    "surfaceSecondary": "#18181B",
+    "onSurfaceSecondary": "#E4E4E7",
+    "surfaceTertiary": "#27272A",
+    "onSurfaceTertiary": "#D4D4D8",
+    "surfaceInverse": "#FFFFFF",
+    "onSurfaceInverse": "#000000",
+    "brand": "#F5B041",
+    "onBrand": "#452800",
+    "brandPrimary": "#E5A93C",
+    "onBrandPrimary": "#452800",
+    "brandSecondary": "#DC2626",
+    "onBrandSecondary": "#FFFFFF",
+    "brandTertiary": "#451A03",
+    "onBrandTertiary": "#FDE68A",
+    "success": "#10B981",
+    "onSuccess": "#022C22",
+    "warning": "#F59E0B",
+    "onWarning": "#451A03",
+    "error": "#EF4444",
+    "onError": "#450A0A",
+    "info": "#3B82F6",
+    "onInfo": "#FAFAFA",
+    "border": "#27272A",
+    "borderStrong": "#3F3F46",
+    "divider": "#27272A",
+    "muted": "#A1A1AA"
+  },
+  "typography": {
+    "displayFontFamily": "Fraunces",
+    "textFontFamily": "Geist",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Generous padding around elements to create a premium feel. Do not cramp lists or cards.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 6,
+    "md": 12,
+    "lg": 20,
+    "pill": 999
+  },
+  "shadow_tier": 0,
+  "navigation": "bottom_tabs",
+  "icon_set": "Phosphor",
+  "glassmorphism": {
+    "enabled": true,
+    "do's": [
+      "Bottom tab bar",
+      "Sticky headers over scrolling content",
+      "Bottom sheet headers and drag handles",
+      "Event and venue hero cards overlay",
+      "Floating action buttons"
+    ],
+    "dont's": [
+      "Form fields",
+      "Body text regions",
+      "Every single list row in the venue directory"
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Login/Signup",
+      "purpose": "Onboard users, select roles, and choose membership tiers.",
+      "states": {
+        "loading": "Centered brand-colored activity indicator on dark background.",
+        "empty": "N/A",
+        "error": "Toast or inline text using brandSecondary (crimson)."
+      },
+      "layout": "Full-bleed background image with a top-to-bottom gradient scrim. The bottom 40% houses a frosted glass container with auth buttons (Apple, Google, Email). Includes a clear hierarchy for Role Selection (Guest, Promoter, Venue) and Membership Tiers using cards with borderStrong for the selected state."
+    },
+    {
+      "name": "Home (Events Feed)",
+      "purpose": "Discover upcoming nightlife events and parties.",
+      "states": {
+        "loading": "Skeleton loaders for event cards.",
+        "empty": "Illustration of an empty club with text 'No events near you' and a 'Change Location' CTA.",
+        "error": "Error message with 'Retry' button."
+      },
+      "layout": "Glass sticky header for location and filters. Main feed uses large cinematic event cards (2x1 ratio). Each card has a real background photo, a vertical gradient scrim (transparent to 80% surfaceInverse), and text/date anchored at the bottom. A pinned FAB for quick map view or filtering."
+    },
+    {
+      "name": "Event Details",
+      "purpose": "Show event info and drive ticket purchases.",
+      "states": {
+        "loading": "Full screen skeleton.",
+        "empty": "N/A",
+        "error": "Error fetching event details."
+      },
+      "layout": "Full-bleed hero image with parallax effect. Glass header with back button. Content (DJs, times, location, promoter info) scrolls over the hero image. A fixed glass bottom container holds the 'Buy Ticket' CTA."
+    },
+    {
+      "name": "Ticket Purchase / Reservation",
+      "purpose": "Handle transactions including base price, platform fee, and deposits.",
+      "states": {
+        "loading": "Processing overlay.",
+        "empty": "N/A",
+        "error": "Transaction failed prompt."
+      },
+      "layout": "Modal bottom sheet. Displays a clear line-item breakdown of costs (Ticket, VIP fee, 15-25% platform fee). Uses brandPrimary for the main payment button."
+    },
+    {
+      "name": "Promoter Dashboard",
+      "purpose": "Track earnings, view leaderboards, and manage referrals.",
+      "states": {
+        "loading": "Skeleton layout for metrics.",
+        "empty": "Prompt to 'Share your first referral link'.",
+        "error": "Data load error."
+      },
+      "layout": "Top section features elevated glass cards showing metrics (Earnings, Tickets Sold) with gold/amber glowing text. Middle section displays a large scannable QR code and share button. Bottom section is a scannable leaderboard list of top promoters."
+    },
+    {
+      "name": "Venue Directory & Profile",
+      "purpose": "Browse venues and book tables/VIP access.",
+      "states": {
+        "loading": "List skeleton.",
+        "empty": "No venues found.",
+        "error": "Network error."
+      },
+      "layout": "Directory uses a 2-column grid of venue cards with surfaceSecondary backgrounds and subtle borders. Venue Profile follows the Event Details layout but includes an interactive table/bottle selection form for reservations."
+    },
+    {
+      "name": "QR Check-in",
+      "purpose": "Admins and promoters scan guest QR codes.",
+      "states": {
+        "loading": "Camera initializing.",
+        "empty": "Waiting for scan...",
+        "error": "Invalid ticket prompt (uses crimson red)."
+      },
+      "layout": "Full screen camera view with a custom overlay and a gold laser scan animation. A bottom glass sheet displays a live feed of recently scanned guests and their status."
+    },
+    {
+      "name": "Profile & Chat",
+      "purpose": "Manage account, membership, and communicate with venues/promoters.",
+      "states": {
+        "loading": "Spinner.",
+        "empty": "No messages.",
+        "error": "Failed to load profile."
+      },
+      "layout": "Profile header with a tinted background indicating membership tier (e.g., gold glow for Premium). Settings options use surfaceSecondary rows with tinted icon containers. Chat list is integrated as a tab or sub-screen with unread badges in brandSecondary."
+    }
+  ],
+  "images": {
+    "hero_event_1": {
+      "url": "https://images.unsplash.com/photo-1545128485-c400e7702796?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NjZ8MHwxfHNlYXJjaHwzfHxuaWdodGxpZmUlMjBjbHViJTIwcGFydHklMjBjcm93ZHxlbnwwfHx8fDE3OTQ2Mzc2MzR8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "Red illuminated night club crowd"
+    },
+    "hero_event_2": {
+      "url": "https://images.unsplash.com/photo-1630395822970-acd6a691d97e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NjZ8MHwxfHNlYXJjaHwxfHxuaWdodGxpZmUlMjBjbHViJTIwcGFydHklMjBjcm93ZHxlbnwwfHx8fDE3OTQ2Mzc2MzR8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "Blue laser lights club crowd"
+    },
+    "event_cover_dj": {
+      "url": "https://images.unsplash.com/photo-1618409698966-6caa2b95733a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzNzl8MHwxfHNlYXJjaHwyfHxESiUyMHBlcmZvcm1pbmclMjBjcm93ZHxlbnwwfHx8fDE3OTQ2Mzc2MzR8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "DJ performing at mixer"
+    },
+    "venue_cover_1": {
+      "url": "https://images.unsplash.com/photo-1756981168649-0e3c3c8a32f3?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODh8MHwxfHNlYXJjaHwxfHxsdXh1cnklMjBsb3VuZ2UlMjBpbnRlcmlvcnxlbnwwfHx8fDE3OTQ2Mzc2MzR8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "Dark luxurious lounge interior"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Follow the Glass / Luxe DARK personality strictly: use deep blacks and charcoals as the base, and limit the amber/gold and crimson red to accents and CTAs.",
+    "Implement the gradient-to-dark scrim pattern (transparent to 80%+ dark surface) on all image-backed cards (Events, Venues) to ensure text readability.",
+    "Ensure the primary CTA for reservations and ticketing is sticky at the bottom of scrollable views, encapsulated in a frosted glass container.",
+    "Promoter dashboard should prioritize scannability for metrics. Use brandTertiary backgrounds for stat cards to provide a subtle gold tint.",
+    "Integrate Phosphor icons with consistent weights across the app. Use filled icons for active tab states and outlined for inactive.",
+    "Apply subtle haptic feedback for all major interactions: ticket purchases, tab changes, and QR scans.",
+    "Chat should be accessible from the Profile screen or as a header action to save tab space, keeping bottom tabs to Home, Promote, Venues, Profile."
+  ]
+}

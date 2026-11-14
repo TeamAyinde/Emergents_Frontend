@@ -1,0 +1,45 @@
+{
+  "summary": "Iteration 2 retest. Backend: 22 of 23 pytest tests pass. The one failure is minor: base_price is still a required field. Every iteration_1 fix was verified. Tier rules work (premium, corporate, venue and bogus tiers return 400; venue_owner is forced to the venue tier). Reservation prices are set by the server (table 200 / booth 400 / bottle 800). party_size must be 1-30, and an unknown service returns 400. Ticket quantity must be 1-8, past events return 400, and self-referral earns the promoter nothing. Short-code and full-id check-in both work, and a second check-in returns 400. Withdraw uses a conditional update. Venue search escapes the regex. Frontend (375x667): sign-in is not prefilled. All home chips filter correctly (All 8 / Tonight 0 / This Week 5 / VIP 2 / DJ 5 / Open Bar 8). scan-btn is hidden for guests and shown for promoters. The sign-up tiers are Free · Women / 1-Month Free / Member, and a TEST_ sign-up succeeded. A ticket bought with MARCO1 cost $92 and credited the promoter $4.80. Withdraw sent $2.80, then the balance showed $0 and the button was disabled. A booth reservation ($460) was confirmed, and Profile lists tickets (USED) and reservations. The profile cache did not leak between users. One bug, fixed by T1: typing '#XXXXXXXX', the format the UI itself shows, returned 'Not Found' because the client did not URL-encode '#'. All test data was cleaned up by id and the promoter wallet was restored to 0.0. Deprecated packages detected: none.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/reservations", "issue": "ReservationIn.base_price is still a required float even though the server ignores it. A request without base_price returns 422."},
+      {"endpoint": "POST /api/promoter/withdraw", "issue": "Still not restricted to promoter roles (an iteration_1 action item). A guest gets 400 'Insufficient balance' instead of 403. It is harmless today because guest wallets stay at 0."},
+      {"endpoint": "POST /api/reservations", "issue": "There is no check that the reservation date is in the future."},
+      {"endpoint": "POST /api/events", "issue": "Events can be created with a past date (no validation)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Venue reservation party size", "issue": "Non-numeric input such as 'abc' makes parseInt return NaN, which is sent as null. The server returns 422 and the UI shows '[object Object]'. Root cause: src/api.ts:132 casts detail to a string, but FastAPI's 422 detail is an array.", "testID": "reservation-error", "priority": "MEDIUM"},
+      {"component": "Check-in short code", "issue": "FIXED BY T1: api.checkInTicket did not encodeURIComponent the id, so '#8649150B' became a URL fragment and returned 'Not Found'. Verified after the fix: '#E724ECF2' checks in, and a second attempt shows 'Already checked in'.", "testID": "checkin-input", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Home", "issues": ["Category chips are 36px tall, below the 44px touch target minimum."]},
+      {"screen": "Event detail", "issues": ["The promoter-code input sits partly behind the sticky Buy button at the bottom of a 667px screen, so the user must scroll to see it."]},
+      {"screen": "Venue detail", "issues": ["There is no date picker. The reservation date is hardcoded to now + 3 days (app/venue/[id].tsx:42)."]},
+      {"screen": "Profile", "issues": ["The wallet card and Withdraw button are shown to guests and members, who cannot earn anything. Consider showing them only to promoters."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_nocturne_api.py", "/app/test_reports/pytest/pytest_iteration2.xml"],
+  "action_items": [
+    "Make ReservationIn.base_price Optional (or remove it), and drop it from the frontend payload.",
+    "In src/api.ts request(), format array-style 422 details (e.g. detail.map(d => d.msg).join(', ')). Also validate party size on the client so NaN is never sent.",
+    "Restrict /promoter/withdraw to promoter, venue_owner and admin roles (return 403 for others).",
+    "Validate that reservation and event dates are in the future.",
+    "Add a date picker for reservations. Increase chip height to 44px. Make sure the promoter-code input is not hidden behind the sticky Buy button."
+  ],
+  "critical_code_review_comments": [
+    "Ticket purchase increments the event's tickets_sold and the promoter's wallet in separate writes with no transaction. This is acceptable for a mock payment flow.",
+    "The 'Tonight' chip means 'within the next 24 hours', not the current calendar night."
+  ],
+  "updated_files": ["/app/backend/tests/test_nocturne_api.py", "/app/frontend/src/api.ts (encodeURIComponent in checkInTicket)"],
+  "success_rate": {"backend": "96% (22/23)", "frontend": "95% (all requested flows pass after the check-in encode fix; one minor error-message bug)"},
+  "seed_data_creation": "None. All TEST_ users, tickets, events and reservations were deleted by id, and the promoter wallet was restored to 0.0.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "pytest.ini forces -n 2 --dist loadscope. Tests that touch the promoter wallet must stay in one class (TestTickets), because each worker's module teardown restores the wallet delta. The test file tracks created ids and cleans them up itself.",
+  "rca_of_issue": "Check-in '#code' failure: the frontend built the path as `/tickets/${id}/checkin` with a raw '#', which the browser or fetch treats as a fragment. The request went to POST /api/tickets/ and returned 404. Fix: encodeURIComponent(id). The backend already strips '#'."
+}
