@@ -168,6 +168,7 @@ class EventOut(BaseModel):
     has_tables: bool = False
     created_by: Optional[str] = None
     featured: bool = False
+    spotlight: bool = False
 
 
 class EventCreate(BaseModel):
@@ -522,8 +523,10 @@ async def list_events(city: Optional[str] = None, upcoming: bool = True):
         filt["date"] = {"$gte": datetime.now(timezone.utc)}
     cursor = db.events.find(filt, {"_id": 0}).sort("date", ASCENDING)
     boosted = await featured_venue_ids()
-    events = [EventOut(**{**e, "featured": e.get("venue_id") in boosted}) async for e in cursor]
-    return sorted(events, key=lambda e: not e.featured)  # boosted venues' events first, then by date
+    events = [EventOut(**{**e, "featured": e.get("venue_id") in boosted,
+                          "spotlight": _is_featured({"featured_until": e.get("spotlight_until")})}) async for e in cursor]
+    # promoter spotlights first, then boosted venues' events, then by date
+    return sorted(events, key=lambda e: (not e.spotlight, not e.featured))
 
 
 @api.get("/events/{event_id}", response_model=EventOut)
@@ -531,7 +534,7 @@ async def get_event(event_id: str):
     e = await db.events.find_one({"id": event_id}, {"_id": 0})
     if not e:
         raise HTTPException(404, "Event not found")
-    return EventOut(**e)
+    return EventOut(**{**e, "spotlight": _is_featured({"featured_until": e.get("spotlight_until")})})
 
 
 @api.post("/events", response_model=EventOut, status_code=201)

@@ -71,3 +71,9 @@ Money-making hospitality app (founder has construction/club/nightlife/lounge/res
 - Featured venue boosts: $49/7 days, $149/30 days (Host Studio). Featured venues + their events sorted first with FEATURED badge
 - Stripe Connect Express for promoters & venue owners (/payout-settings). Withdrawals auto-transfer when bank linked; admin "settle" transfers to venue owner when linked. Requires own secret key + Connect enabled (preview currently uses proxy → shows "Coming soon")
 - PENDING: user's STRIPE_API_KEY currently holds a publishable key (pk_live) in live slot and empty test slot — needs sk_test_/sk_live_ secret keys
+
+## Iteration 11 — Earnings, Yearly Gold, Spotlight
+- Host Studio Earnings card (/api/host/earnings): owed, paid, by source, recent
+- Gold yearly plan $1,490/year (Stripe yearly subscription); monthly/yearly toggle on Gold
+- Promoter Event Spotlight $39/3 days, $79/7 days; spotlighted events top of feed with SPOTLIGHT badge
+- STILL PENDING: real Stripe secret key (user skipped secure card twice; key pasted in chat was masked and unusable)

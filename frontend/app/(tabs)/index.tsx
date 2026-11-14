@@ -135,7 +135,8 @@ function EventCard({ item, onPress }: { item: EventItem; onPress: () => void }) 
           <Text style={styles.dateMonth}>{d.toLocaleString("en", { month: "short" }).toUpperCase()}</Text>
         </View>
         <View style={{ alignItems: "flex-end", gap: 6 }}>
-          {item.featured ? <FeaturedBadge testID={`event-featured-${item.id}`} /> : null}
+          {item.spotlight ? <FeaturedBadge testID={`event-spotlight-${item.id}`} label="SPOTLIGHT" />
+            : item.featured ? <FeaturedBadge testID={`event-featured-${item.id}`} /> : null}
           <View style={styles.cityBadge}>
             <FeatherIcon name="map-pin" color={colors.onSurface} size={10} />
             <Text style={styles.cityText}>{item.city}</Text>

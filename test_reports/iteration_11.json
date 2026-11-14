@@ -1,0 +1,52 @@
+{
+  "summary": "Iteration 11. The Gold yearly plan, promoter Event Spotlight and the Venue Earnings dashboard all work end to end. Backend: the new test file test_nocturne_iter11.py passed 21/21. The full suite, run serially with -n 0, passed 164/164 and covers the regression checks for monthly membership, boost, ticket and reservation checkouts. E2E at 390px with Stripe test card 4242: guest Membership -> Gold -> gold-billing-toggle appears (only for Gold) -> gold-yearly -> button 'Subscribe · $1,490/year' -> Stripe shows 'Nocturne Gold membership (yearly) $1,490.00 per year' -> payment-status-paid. GET /membership/subscription then returns active, level gold, interval 'year', renews_at +1 year. Stripe line item: recurring.interval=year, unit_amount 149000. Promoter: event detail shows spotlight-card, spotlight-3days goes to Stripe ($39.00) -> paid. GET /api/events lists that event first with spotlight=true. The home feed shows the SPOTLIGHT badge (event-spotlight-{id}) and the card switches to 'Spotlighted — extend it'. Guest sees no spotlight-card. API checks: guest and venue_owner get 403; past event, bad plan, and yearly Silver/Bronze get 400; unknown event 404; bad interval 422. A second spotlight extends from the current end (+7d). Venue: Host Studio earnings-card shows the $0 empty state, and with 3 TEST_ payables it shows owed $290.50 / paid $100.00, the per-source breakdown and the recent list. /host/earnings for guest and promoter returns 403 and for admin 200; its totals match /host/payouts. 4 UI copy/state bugs were found on the Membership screen when the plan is yearly. No deprecated Expo packages detected. No SafeAreaView issues detected.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/payments/checkout kind=membership (gold yearly -> gold monthly)", "issue": "A user on an active Gold yearly plan can check out Gold monthly (200). activate_subscription then replaces the yearly plan right away, with no proration or credit for the unused year. In proxy mode the old-sub cancel also fails (known since iteration 10), so both subs stay live in Stripe. Consider blocking a yearly->monthly switch until the period ends, or prorating."},
+      {"endpoint": "quote_spotlight (billing.py:215)", "issue": "Any promoter can spotlight any event, including events they don't promote. Confirm this is intended. There is also no cap on how many events can be spotlighted at once."},
+      {"endpoint": "GET /api/host/payouts vs /api/host/earnings", "issue": "DRY: /host/earnings is a superset of /host/payouts (same aggregation). Consider removing /host/payouts or making it reuse the new aggregation."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Membership subscription card", "issue": "The title is hardcoded to 'monthly', so a yearly Gold plan shows 'Gold · monthly'. Reference: /app/frontend/app/membership.tsx:91", "testID": "subscription-card", "priority": "MEDIUM"},
+      {"component": "Membership renew date", "issue": "renewDate has no year. A yearly plan bought on Nov 14 shows 'Renews automatically on Nov 14 (yearly).', which reads like today. Add the year. Reference: /app/frontend/app/membership.tsx:69", "testID": "subscription-renewal", "priority": "LOW"},
+      {"component": "Gold billing toggle default", "issue": "The 'yearly' state always starts false. A user already on Gold yearly who taps Gold sees 'Subscribe · $149/month' instead of 'Your current plan', which invites an accidental switch to monthly. Initialise it from sub.interval === 'year'. Reference: /app/frontend/app/membership.tsx:28", "testID": "gold-billing-toggle", "priority": "MEDIUM"},
+      {"component": "Membership footer hint", "issue": "The hint always says 'renews monthly', even when Gold yearly is selected. Reference: /app/frontend/app/membership.tsx:173", "testID": "membership-change-btn", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Payment result", "issues": ["The amount is rendered with toFixed(2) and no thousands separator: 'Nocturne Gold · $1,490/year · $1490.00'. Use toLocaleString."]},
+      {"screen": "Event detail (promoter)", "issues": ["SpotlightCard also renders on past events (the backend returns 400 'already happened' only after the tap). Hide it when the event date has passed."]},
+      {"screen": "Host Studio Earnings", "issues": ["There is no label between the per-source totals and the recent rows. Paid rows are told apart only by green colour, with no 'Paid' text. The card has no loading or error state and returns null."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_nocturne_iter11.py",
+    "/app/test_reports/pytest/iter11.xml",
+    "/app/test_reports/pytest/full_iter11.xml"
+  ],
+  "action_items": [
+    "membership.tsx:91: show 'yearly' when sub.interval === 'year'.",
+    "membership.tsx:28: initialise `yearly` from sub.interval (useEffect when sub loads).",
+    "membership.tsx:69/173: include the year in renewDate, and make the hint interval-aware ('renews yearly').",
+    "payment-result.tsx:88: format the amount with thousands separators.",
+    "Decide the rule for Gold yearly -> monthly switches (block until period end, or prorate). Today the switch goes through and drops the unused year.",
+    "Optional: hide SpotlightCard for past events, and confirm whether promoters may spotlight events they don't promote."
+  ],
+  "critical_code_review_comments": [
+    "subscription_params: the trial correctly applies only when interval == 'month'. Yearly uses YEARLY_PRICE with recurring.interval='year' (verified on the Stripe session).",
+    "The duplicate-plan check compares level + interval + status, so Gold yearly -> Gold yearly is 400 and Gold yearly -> Gold monthly is allowed (see the backend minor issue).",
+    "apply_spotlight stacks from max(current end, now). Verified a +7d extension. GET /events sorts spotlight first, then featured.",
+    "host_earnings correctly scopes by owner_id (admin sees all) and excludes _id. The SOURCE keys (ticket, table, reservation) match the record_venue_share callers."
+  ],
+  "updated_files": ["/app/backend/tests/test_nocturne_iter11.py (new, 21 tests)"],
+  "success_rate": {"backend": "100% (iter11 21/21; full suite 164/164 with -n 0)", "frontend": "~85%: all 3 features work E2E; 4 copy/state bugs on the Membership screen for yearly plans"},
+  "seed_data_creation": "None kept. Cleanup by id: guest@nocturne.app reset to level bronze, and its subscription fields were unset (stripe_subscription_id, customer, status, level, interval, level_paid_until, level_since). Deleted 3 payment_transactions from my UI runs (guest Gold yearly paid, guest Gold monthly cancelled, promoter spotlight paid), 1 membership_payment, 1 spotlight row and 3 TEST_iter11 venue_payables. spotlight_until/spotlight_by were unset on event dc097beb (no event has a spotlight now). Deleted 2 TEST_ users that an interrupted suite run left behind. Left alone because I did not create them: 2 transactions from 15:09 (a guest Gold-yearly session, cancelled, and a promoter 'Midnight Gold · 7 days' spotlight session, initiated). The Stripe sandbox has 1 more active TEST-mode yearly sub, sub_1Ubih2C4OfX1G9SSzJ12HWQp, which cannot be cancelled through the proxy.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run the backend suite with -n 0. A full run takes ~2.5 min, so launch it with setsid nohup ... & and poll; a plain background job is killed when the tool times out. conftest.simulate_paid works for one-time kinds (spotlight/boost) but not for subscriptions, which need a real 4242 payment in the browser. The proxy supports Session.retrieve(expand=['line_items']) but returns 404 for list_line_items. Stripe pay button names: 'Subscribe' (subscription) and 'Pay' (one-time). Login on web: clear localStorage, then /sign-in with signin-email, signin-password and signin-submit.",
+  "rca_of_issue": "The Membership screen was written for monthly plans only: the title literal 'monthly' (line 91), the hint text (line 173), and a `yearly` state that is never synced from the subscription (line 28)."
+}

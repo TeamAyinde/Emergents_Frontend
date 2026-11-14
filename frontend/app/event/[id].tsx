@@ -22,6 +22,7 @@ import { useAuth } from "@/src/auth-context";
 import { canAccess, Level, LEVEL_INFO } from "@/src/levels";
 import { TableMap } from "@/src/table-map";
 import { startCheckout } from "@/src/payments";
+import { SpotlightCard } from "@/src/spotlight-card";
 
 export default function EventDetails() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -149,6 +150,7 @@ export default function EventDetails() {
           ) : null}
 
           {ev.has_tables && !locked ? <TableMap eventId={ev.id} userLevel={lvl} /> : null}
+          {(user?.role === "promoter" || user?.role === "admin") && new Date(ev.date) > new Date() ? <SpotlightCard eventId={ev.id} active={ev.spotlight} /> : null}
 
           <Text style={styles.sectionTitle}>{ev.plus_one_limit > 0 ? `Tickets (you + up to ${maxQty - 1})` : "Tickets (just you)"}</Text>
           <View style={styles.qtyRow}>

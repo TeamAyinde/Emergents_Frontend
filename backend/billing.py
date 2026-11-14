@@ -21,6 +21,8 @@ PayeeDep = Annotated[dict, Depends(require_roles("promoter", "venue_owner"))]
 log = logging.getLogger("billing")
 TRIAL_DAYS = 7
 BOOST_PLANS = {"week": (49.0, 7), "month": (149.0, 30)}
+SPOTLIGHT_PLANS = {"3days": (39.0, 3), "week": (79.0, 7)}
+YEARLY_PRICE = {"gold": 1490.0}  # 2 months free vs 12 × $149
 APP_SCHEMES = ("exp://", "exps://", "frontend://")
 ENDED = ("canceled", "unpaid", "incomplete_expired")
 
@@ -35,8 +37,9 @@ def trial_eligible(user: dict, level: str) -> bool:
     return level == "bronze" and user.get("membership_tier") == "trial_male" and not user.get("trial_used")
 
 
-def subscription_params(user: dict, level: str) -> dict:
-    trial = trial_eligible(user, level)
+def subscription_params(user: dict, level: str, interval: str = "month") -> dict:
+    trial = interval == "month" and trial_eligible(user, level)
+    amount = YEARLY_PRICE[level] if interval == "year" else LEVEL_PRICE[level]
     sub_data: dict = {"metadata": {"user_id": user["id"], "level": level}}
     if trial:
         sub_data["trial_period_days"] = TRIAL_DAYS
@@ -44,9 +47,9 @@ def subscription_params(user: dict, level: str) -> dict:
         "mode": "subscription",
         "line_items": [{
             "price_data": {
-                "currency": "usd", "unit_amount": round(LEVEL_PRICE[level] * 100),
-                "recurring": {"interval": "month"},
-                "product_data": {"name": f"Nocturne {level.capitalize()} membership"},
+                "currency": "usd", "unit_amount": round(amount * 100),
+                "recurring": {"interval": interval},
+                "product_data": {"name": f"Nocturne {level.capitalize()} membership ({interval}ly)"},
             },
             "quantity": 1,
         }],
@@ -98,6 +101,7 @@ async def activate_subscription(tx: dict, session_id: str) -> str:
     now = _now()
     await db.users.update_one({"id": user["id"]}, {"$set": {
         "level": level, "level_since": now, "subscription_level": level,
+        "subscription_interval": tx["payload"].get("interval", "month"),
         "stripe_customer_id": g(session, "customer"), "stripe_subscription_id": sub_id,
         "trial_used": user.get("trial_used") or g(sub, "status") == "trialing",
     }})
@@ -138,6 +142,7 @@ class SubscriptionOut(BaseModel):
     cancel_at_period_end: bool = False
     trial_available: bool = False
     manageable: bool = OWN_KEY  # cancel/resume needs Nocturne's own Stripe key
+    interval: str = "month"
 
 
 async def _sub_out(uid: str) -> SubscriptionOut:
@@ -147,7 +152,7 @@ async def _sub_out(uid: str) -> SubscriptionOut:
         active=status in ("active", "trialing", "past_due"), status=status, level=u.get("subscription_level"),
         renews_at=u.get("level_paid_until") if status else None,
         cancel_at_period_end=bool(u.get("subscription_cancel_at_period_end")),
-        trial_available=trial_eligible(u, "bronze"),
+        trial_available=trial_eligible(u, "bronze"), interval=u.get("subscription_interval") or "month",
     )
 
 
@@ -203,6 +208,60 @@ async def apply_boost(tx: dict) -> str:
     await db.boosts.insert_one({"id": rid, "venue_id": p["venue_id"], "user_id": tx["user_id"], "plan": p["plan"],
                                 "amount": tx["amount"], "until": start + timedelta(days=days), "created_at": _now()})
     return rid
+
+
+# ---------- Promoter event spotlight ----------
+
+async def quote_spotlight(event_id: str, plan: str, user: dict) -> dict:
+    if user["role"] not in ("promoter", "admin"):
+        raise HTTPException(403, "Only promoters can spotlight events")
+    if plan not in SPOTLIGHT_PLANS:
+        raise HTTPException(400, "Pick a spotlight plan")
+    ev = await db.events.find_one({"id": event_id}, {"_id": 0})
+    if not ev:
+        raise HTTPException(404, "Event not found")
+    ev_date = ev["date"] if ev["date"].tzinfo else ev["date"].replace(tzinfo=timezone.utc)
+    if ev_date < _now():
+        raise HTTPException(400, "This event has already happened")
+    price, days = SPOTLIGHT_PLANS[plan]
+    return {"total": price, "label": f"Spotlight · {ev['title']} · {days} days", "venue_id": None,
+            "payload": {"event_id": event_id, "plan": plan}, "no_credit": True}
+
+
+async def apply_spotlight(tx: dict) -> str:
+    p = tx["payload"]
+    _, days = SPOTLIGHT_PLANS[p["plan"]]
+    ev = await db.events.find_one({"id": p["event_id"]}, {"_id": 0, "spotlight_until": 1})
+    cur = (ev or {}).get("spotlight_until")
+    cur = cur.replace(tzinfo=timezone.utc) if cur and not cur.tzinfo else cur
+    until = (max(cur, _now()) if cur else _now()) + timedelta(days=days)
+    await db.events.update_one({"id": p["event_id"]}, {"$set": {"spotlight_until": until, "spotlight_by": tx["user_id"]}})
+    rid = str(uuid.uuid4())
+    await db.spotlights.insert_one({"id": rid, "event_id": p["event_id"], "user_id": tx["user_id"], "plan": p["plan"],
+                                    "amount": tx["amount"], "until": until, "created_at": _now()})
+    return rid
+
+
+# ---------- Venue earnings ----------
+
+@router.get("/host/earnings")
+async def host_earnings(user: Annotated[dict, Depends(require_roles("venue_owner", "admin"))]):
+    """Bookings, what Nocturne owes this owner and what has been paid out."""
+    filt = {} if user["role"] == "admin" else {"owner_id": user["id"]}
+    ids = [v["id"] async for v in db.venues.find(filt, {"id": 1})]
+    out = {"owed": 0.0, "paid": 0.0, "by_source": {}, "recent": []}
+    async for r in db.venue_payables.aggregate([
+        {"$match": {"venue_id": {"$in": ids}}},
+        {"$group": {"_id": {"s": "$status", "k": "$source"}, "sum": {"$sum": "$amount"}, "n": {"$sum": 1}}},
+    ]):
+        out[r["_id"]["s"]] = round(out.get(r["_id"]["s"], 0) + r["sum"], 2)
+        src = out["by_source"].setdefault(r["_id"]["k"], {"count": 0, "amount": 0.0})
+        src["count"] += r["n"]
+        src["amount"] = round(src["amount"] + r["sum"], 2)
+    out["recent"] = [r async for r in db.venue_payables.find(
+        {"venue_id": {"$in": ids}}, {"_id": 0, "id": 1, "venue_name": 1, "amount": 1, "source": 1, "status": 1, "created_at": 1},
+    ).sort("created_at", -1).limit(15)]
+    return out
 
 
 # ---------- Stripe Connect payouts ----------

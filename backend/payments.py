@@ -17,7 +17,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from billing import (
-    activate_subscription, apply_boost, quote_boost, send_transfer, subscription_params, sync_account_id,
+    YEARLY_PRICE, activate_subscription, apply_boost, apply_spotlight, quote_boost, quote_spotlight, send_transfer, subscription_params, sync_account_id,
     sync_subscription_id, trial_eligible,
 )
 from features import approved_request, quote_table, save_table
@@ -39,7 +39,7 @@ def _now():
 
 
 class CheckoutIn(BaseModel):
-    kind: Literal["ticket", "table", "reservation", "membership", "boost"]
+    kind: Literal["ticket", "table", "reservation", "membership", "boost", "spotlight"]
     origin_url: str = Field(max_length=300)
     return_url: Optional[str] = Field(default=None, max_length=300)  # native deep link
     event_id: Optional[str] = None
@@ -52,7 +52,8 @@ class CheckoutIn(BaseModel):
     date: Optional[datetime] = None
     notes: Optional[str] = Field(default=None, max_length=500)
     level: Optional[str] = None
-    plan: Optional[str] = None  # boost: week | month
+    plan: Optional[str] = None  # boost: week | month · spotlight: 3days | week
+    interval: Literal["month", "year"] = "month"  # membership billing
 
 
 class CheckoutOut(BaseModel):
@@ -115,6 +116,8 @@ async def _quote(body: CheckoutIn, user: dict) -> dict:
                 "payload": res_in.model_dump(mode="json")}
     if body.kind == "boost":
         return await quote_boost(body.venue_id or "", body.plan or "", user)
+    if body.kind == "spotlight":
+        return await quote_spotlight(body.event_id or "", body.plan or "", user)
     # membership: monthly subscription, auto-renews
     if body.level not in LEVEL_RANK:
         raise HTTPException(400, "Unknown level")
@@ -122,9 +125,16 @@ async def _quote(body: CheckoutIn, user: dict) -> dict:
         raise HTTPException(400, "Business accounts already have full access")
     if body.level == "bronze" and user.get("membership_tier") == "free_girl":
         raise HTTPException(400, "Bronze is free for you — no payment needed")
+    if body.interval == "year" and body.level not in YEARLY_PRICE:
+        raise HTTPException(400, "Yearly billing is available for Gold")
     if (user.get("stripe_subscription_id") and user.get("subscription_level") == body.level
+            and (user.get("subscription_interval") or "month") == body.interval
             and user.get("subscription_status") in ("active", "trialing")):
-        raise HTTPException(400, "You're already on this monthly plan")
+        raise HTTPException(400, "You're already on this plan")
+    if body.interval == "year":
+        price = YEARLY_PRICE[body.level]
+        return {"total": price, "label": f"Nocturne {body.level.capitalize()} · ${price:,.0f}/year", "venue_id": None,
+                "payload": {"level": body.level, "interval": "year"}, "no_credit": True, "subscription": True}
     price = LEVEL_PRICE[body.level]
     trial = trial_eligible(user, body.level)
     label = (f"Nocturne {body.level.capitalize()} · 7 days free, then ${price:.2f}/month" if trial
@@ -153,6 +163,8 @@ async def _fulfil(tx: dict, payment_session: Optional[str]) -> str:
         return (await save_reservation(ReservationIn(**p), user, payment_session)).id
     if tx["kind"] == "boost":
         return await apply_boost(tx)
+    if tx["kind"] == "spotlight":
+        return await apply_spotlight(tx)
     return await activate_subscription(tx, payment_session)
 
 
@@ -241,7 +253,7 @@ async def create_checkout(body: CheckoutIn, user: UserDep):
         success = f"{origin}/payment-result?session_id={{CHECKOUT_SESSION_ID}}"
         cancel = f"{origin}/payment-result?cancelled=1&tx={tx['id']}"
     if q.get("subscription"):
-        params = subscription_params(user, q["payload"]["level"])
+        params = subscription_params(user, q["payload"]["level"], q["payload"].get("interval", "month"))
     else:
         params = {"mode": "payment", "payment_method_types": ["card"], "line_items": [{
             "price_data": {"currency": "usd", "unit_amount": round(due * 100), "product_data": {"name": q["label"][:250]}},

@@ -4,11 +4,11 @@ import FeatherIcon from "@react-native-vector-icons/feather";
 import { colors, radius, spacing } from "./theme";
 
 /** Gold "Featured" pill for venues that bought a boost. */
-export function FeaturedBadge({ testID }: { testID?: string }) {
+export function FeaturedBadge({ testID, label = "FEATURED" }: { testID?: string; label?: string }) {
   return (
     <View style={styles.pill} testID={testID}>
       <FeatherIcon name="zap" size={10} color={colors.onBrandPrimary} />
-      <Text style={styles.text}>FEATURED</Text>
+      <Text style={styles.text}>{label}</Text>
     </View>
   );
 }

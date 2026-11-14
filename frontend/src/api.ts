@@ -98,6 +98,7 @@ export type EventItem = {
   guest_list_visible: boolean;
   has_tables: boolean;
   featured?: boolean;
+  spotlight?: boolean;
 };
 
 export type Ticket = {
@@ -194,6 +195,7 @@ export const api = {
     request<{ settled: number }>(`/admin/payouts/venues/${venueId}/settle`, { method: "POST" }),
   markWithdrawalPaid: (id: string) => request<{ ok: boolean }>(`/admin/withdrawals/${id}/paid`, { method: "POST" }),
   hostPayouts: () => request<{ owed: number; paid: number }>("/host/payouts"),
+  hostEarnings: () => request<HostEarnings>("/host/earnings"),
   subscription: () => request<Subscription>("/membership/subscription"),
   setRenewal: (action: "cancel" | "resume") =>
     request<Subscription>(`/membership/subscription/${action}`, { method: "POST" }),
@@ -333,11 +335,17 @@ export type CheckoutBody =
   | { kind: "ticket"; event_id: string; quantity: number; promoter_code?: string }
   | { kind: "table"; event_id: string; table_id: string; party_size: number }
   | { kind: "reservation"; venue_id: string; date: string; party_size: number; service_type: string; notes?: string }
-  | { kind: "membership"; level: string }
-  | { kind: "boost"; venue_id: string; plan: "week" | "month" };
+  | { kind: "membership"; level: string; interval?: "month" | "year" }
+  | { kind: "boost"; venue_id: string; plan: "week" | "month" }
+  | { kind: "spotlight"; event_id: string; plan: "3days" | "week" };
+export type HostEarnings = {
+  owed: number; paid: number;
+  by_source: Record<string, { count: number; amount: number }>;
+  recent: { id: string; venue_name: string; amount: number; source: string; status: string; created_at: string }[];
+};
 export type Subscription = {
   active: boolean; status: string | null; level: string | null; renews_at: string | null;
-  cancel_at_period_end: boolean; trial_available: boolean; manageable: boolean;
+  cancel_at_period_end: boolean; trial_available: boolean; manageable: boolean; interval: "month" | "year";
 };
 export type ConnectStatus = { available: boolean; connected: boolean; payouts_enabled: boolean; details_submitted: boolean };
 export type CheckoutResult = { url: string | null; session_id: string; amount: number; paid_with_credit: boolean; result_id: string | null };
