@@ -20,6 +20,7 @@ import { api, EventItem } from "@/src/api";
 import { useAuth } from "@/src/auth-context";
 import { colors, radius, spacing } from "@/src/theme";
 import { LevelBadge } from "@/src/levels";
+import { FeaturedBadge } from "@/src/featured-badge";
 
 const CATEGORIES = ["All", "Tonight", "This Week", "VIP", "DJ", "Open Bar"];
 
@@ -134,6 +135,7 @@ function EventCard({ item, onPress }: { item: EventItem; onPress: () => void }) 
           <Text style={styles.dateMonth}>{d.toLocaleString("en", { month: "short" }).toUpperCase()}</Text>
         </View>
         <View style={{ alignItems: "flex-end", gap: 6 }}>
+          {item.featured ? <FeaturedBadge testID={`event-featured-${item.id}`} /> : null}
           <View style={styles.cityBadge}>
             <FeatherIcon name="map-pin" color={colors.onSurface} size={10} />
             <Text style={styles.cityText}>{item.city}</Text>

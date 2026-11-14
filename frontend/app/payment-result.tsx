@@ -71,6 +71,7 @@ export default function PaymentResult() {
 
   function goToResult() {
     if (st?.kind === "ticket" && st.result_id) router.replace(`/ticket/${st.result_id}`);
+    else if (st?.kind === "boost") router.replace("/host");
     else router.replace("/(tabs)/profile");
   }
 
@@ -80,7 +81,11 @@ export default function PaymentResult() {
   }
 
   const view = {
-    paid: { icon: "check-circle", color: colors.success, title: "Payment confirmed", text: st ? `${st.label} · $${st.amount.toFixed(2)}` : "" },
+    paid: {
+      icon: "check-circle", color: colors.success,
+      title: st?.kind === "membership" && st.amount === 0 ? "Free trial started" : "Payment confirmed",
+      text: st ? (st.amount === 0 ? st.label : `${st.label} · $${st.amount.toFixed(2)}`) : "",
+    },
     pending: { icon: "clock", color: colors.brandPrimary, title: timedOut ? "Still confirming…" : "Confirming payment…",
       text: timedOut ? "Your bank is taking a moment. If you paid, your booking will appear in Profile shortly." : "This takes a few seconds." },
     cancelled: { icon: "x-circle", color: colors.muted, title: "Payment cancelled", text: "No charge was made. You can try again any time." },
@@ -111,7 +116,7 @@ export default function PaymentResult() {
         {status === "paid" ? (
           <LuxButton
             testID="payment-continue-btn"
-            label={st?.kind === "ticket" ? "View my ticket" : st?.kind === "membership" ? "Go to my profile" : "See my booking"}
+            label={st?.kind === "ticket" ? "View my ticket" : st?.kind === "membership" ? "Go to my profile" : st?.kind === "boost" ? "Back to Host Studio" : "See my booking"}
             onPress={goToResult}
           />
         ) : (

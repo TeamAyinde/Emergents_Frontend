@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
@@ -23,24 +24,47 @@ export default function Membership() {
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const business = user?.role === "admin" || user?.role === "venue_owner";
   const bronzeFree = user?.membership_tier === "free_girl";
+  const [renewBusy, setRenewBusy] = useState(false);
+  const { data: sub, refetch: refetchSub } = useQuery({
+    queryKey: ["subscription"], queryFn: api.subscription, enabled: !!user && user.role !== "admin" && user.role !== "venue_owner",
+  });
 
   async function onChange() {
     setBusy(true);
     setMsg(null);
     try {
-      if (ORDER.indexOf(selected) > ORDER.indexOf(current)) {
-        await startCheckout({ kind: "membership", level: selected }, router);
+      if (selected === "bronze" && bronzeFree) {
+        await api.upgrade(selected);
+        await refresh();
+        await refetchSub();
+        setMsg({ ok: true, text: "You're on free Bronze. Your monthly plan has been cancelled." });
         return;
       }
-      await api.upgrade(selected);
-      await refresh();
-      setMsg({ ok: true, text: `You've moved to ${LEVEL_INFO[selected].label}.` });
+      await startCheckout({ kind: "membership", level: selected }, router);
     } catch (e) {
       setMsg({ ok: false, text: e instanceof Error ? e.message : "Try again" });
     } finally {
       setBusy(false);
     }
   }
+
+  async function toggleRenewal() {
+    if (!sub) return;
+    setRenewBusy(true);
+    setMsg(null);
+    try {
+      await api.setRenewal(sub.cancel_at_period_end ? "resume" : "cancel");
+      await refetchSub();
+    } catch (e) {
+      setMsg({ ok: false, text: e instanceof Error ? e.message : "Try again" });
+    } finally {
+      setRenewBusy(false);
+    }
+  }
+
+  const onPlan = !!sub?.active && sub.level === selected;
+  const trial = selected === "bronze" && !!sub?.trial_available;
+  const renewDate = sub?.renews_at ? new Date(sub.renews_at).toLocaleDateString("en", { month: "short", day: "numeric" }) : "";
 
   return (
     <View style={styles.root}>
@@ -59,11 +83,33 @@ export default function Membership() {
         {business ? (
           <Text style={styles.note} testID="membership-business-note">Business accounts already have full Gold access.</Text>
         ) : null}
+        {sub?.active && sub.level ? (
+          <View style={styles.subCard} testID="subscription-card">
+            <Text style={styles.subTitle}>
+              {LEVEL_INFO[sub.level as Level].label} · {sub.status === "trialing" ? "free trial" : sub.status === "past_due" ? "payment due" : "monthly"}
+            </Text>
+            <Text style={styles.subText} testID="subscription-renewal">
+              {sub.cancel_at_period_end
+                ? `Ends on ${renewDate}. You won't be charged again.`
+                : sub.status === "trialing"
+                  ? `Free until ${renewDate}, then $${LEVEL_INFO[sub.level as Level].price}/month.`
+                  : `Renews automatically on ${renewDate}.`}
+            </Text>
+            {sub.manageable ? (
+              <Pressable testID="subscription-toggle-btn" onPress={toggleRenewal} disabled={renewBusy} style={styles.subBtn}>
+                <Text style={styles.subBtnText}>{renewBusy ? "Updating…" : sub.cancel_at_period_end ? "Keep my plan" : "Cancel auto-renew"}</Text>
+              </Pressable>
+            ) : (
+              <Text style={styles.subText} testID="subscription-manage-note">To change auto-renew, message your concierge.</Text>
+            )}
+          </View>
+        ) : null}
         {ORDER.map((lvl) => {
           const info = LEVEL_INFO[lvl];
           const isCurrent = lvl === current;
           const isSel = lvl === selected;
-          const price = lvl === "bronze" && bronzeFree ? "Free for women" : `$${info.price}/mo`;
+          const price = lvl === "bronze" && bronzeFree ? "Free for women"
+            : lvl === "bronze" && sub?.trial_available ? `7 days free, then $${info.price}/mo` : `$${info.price}/mo`;
           return (
             <Pressable
               key={lvl}
@@ -95,18 +141,18 @@ export default function Membership() {
           <LuxButton
             testID="membership-change-btn"
             label={
-              busy ? "Updating…"
-                : selected === current ? "Your current plan"
-                  : ORDER.indexOf(selected) > ORDER.indexOf(current)
-                    ? `Pay $${LEVEL_INFO[selected].price} · Upgrade to ${LEVEL_INFO[selected].label}`
-                    : `Switch to ${LEVEL_INFO[selected].label}`
+              busy ? "Opening checkout…"
+                : onPlan ? "Your current plan"
+                  : selected === "bronze" && bronzeFree ? "Switch to free Bronze"
+                    : trial ? "Start 7-day free trial"
+                      : `Subscribe · $${LEVEL_INFO[selected].price}/month`
             }
-            disabled={selected === current}
+            disabled={onPlan || (selected === current && selected === "bronze" && bronzeFree)}
             onPress={onChange}
             loading={busy}
           />
         ) : null}
-        <Text style={styles.hint}>Secure card payment by Stripe · billed for 30 days of access.</Text>
+        <Text style={styles.hint}>Secure card billing by Stripe · renews monthly · cancel anytime.</Text>
       </ScrollView>
     </View>
   );
@@ -132,4 +178,9 @@ const styles = StyleSheet.create({
   perk: { flexDirection: "row", gap: spacing.sm, alignItems: "center" },
   perkText: { color: colors.onSurfaceSecondary, fontSize: 13 },
   hint: { color: colors.muted, fontSize: 12, textAlign: "center" },
+  subCard: { backgroundColor: colors.surfaceSecondary, borderRadius: radius.lg, padding: spacing.lg, gap: spacing.sm, borderWidth: 1, borderColor: colors.brandPrimary },
+  subTitle: { color: colors.onSurface, fontSize: 16, fontWeight: "800" },
+  subText: { color: colors.onSurfaceSecondary, fontSize: 13, lineHeight: 19 },
+  subBtn: { minHeight: 44, alignSelf: "flex-start", justifyContent: "center", paddingHorizontal: spacing.md, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border },
+  subBtnText: { color: colors.onSurface, fontSize: 13, fontWeight: "700" },
 });

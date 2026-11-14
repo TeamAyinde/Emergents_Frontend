@@ -144,6 +144,8 @@ class VenueOut(BaseModel):
     price_range: str
     description: str
     min_level: str = "bronze"
+    featured_until: Optional[datetime] = None
+    featured: bool = False
 
 
 class EventOut(BaseModel):
@@ -165,6 +167,7 @@ class EventOut(BaseModel):
     guest_list_visible: bool = True
     has_tables: bool = False
     created_by: Optional[str] = None
+    featured: bool = False
 
 
 class EventCreate(BaseModel):
@@ -484,7 +487,8 @@ async def list_venues(city: Optional[str] = None, q: Optional[str] = None):
     if q:
         filt["name"] = {"$regex": re.escape(q), "$options": "i"}
     cursor = db.venues.find(filt, {"_id": 0}).sort("rating", DESCENDING)
-    return [VenueOut(**v) async for v in cursor]
+    venues = [VenueOut(**v, featured=_is_featured(v)) async for v in cursor]
+    return sorted(venues, key=lambda v: not v.featured)  # boosted venues first, stable by rating
 
 
 @api.get("/venues/{venue_id}", response_model=VenueOut)
@@ -492,7 +496,19 @@ async def get_venue(venue_id: str):
     v = await db.venues.find_one({"id": venue_id}, {"_id": 0})
     if not v:
         raise HTTPException(404, "Venue not found")
-    return VenueOut(**v)
+    return VenueOut(**v, featured=_is_featured(v))
+
+
+def _is_featured(v: dict) -> bool:
+    until = v.get("featured_until")
+    if not until:
+        return False
+    until = until if until.tzinfo else until.replace(tzinfo=timezone.utc)
+    return until > datetime.now(timezone.utc)
+
+
+async def featured_venue_ids() -> set:
+    return {v["id"] async for v in db.venues.find({"featured_until": {"$gt": datetime.now(timezone.utc)}}, {"id": 1})}
 
 
 # ---------- Events ----------
@@ -505,7 +521,9 @@ async def list_events(city: Optional[str] = None, upcoming: bool = True):
     if upcoming:
         filt["date"] = {"$gte": datetime.now(timezone.utc)}
     cursor = db.events.find(filt, {"_id": 0}).sort("date", ASCENDING)
-    return [EventOut(**e) async for e in cursor]
+    boosted = await featured_venue_ids()
+    events = [EventOut(**{**e, "featured": e.get("venue_id") in boosted}) async for e in cursor]
+    return sorted(events, key=lambda e: not e.featured)  # boosted venues' events first, then by date
 
 
 @api.get("/events/{event_id}", response_model=EventOut)
@@ -784,12 +802,16 @@ async def withdraw(
     )
     if res.modified_count == 0:
         raise HTTPException(400, "Insufficient balance")
+    wid = str(uuid.uuid4())
     await db.withdrawals.insert_one({
-        "id": str(uuid.uuid4()), "user_id": user["id"], "user_name": user["full_name"],
+        "id": wid, "user_id": user["id"], "user_name": user["full_name"],
         "amount": body.amount, "fee": fee, "net": net, "status": "pending",
         "created_at": datetime.now(timezone.utc),
     })
-    return {"withdrawn": body.amount, "fee": fee, "net": net, "status": "pending"}
+    from billing import try_auto_withdraw  # noqa: E402 — sends to the linked bank when connected
+
+    res = await try_auto_withdraw(wid)
+    return {"withdrawn": body.amount, "fee": fee, "net": net, "status": res["status"]}
 
 
 # ---------- Reservations ----------
@@ -857,12 +879,14 @@ from extras import router as extras_router  # noqa: E402
 from features import ensure_feature_indexes, router as features_router  # noqa: E402
 from rewards import router as rewards_router  # noqa: E402
 from payments import router as payments_router  # noqa: E402
+from billing import router as billing_router  # noqa: E402
 
 app.include_router(api)
 app.include_router(extras_router)
 app.include_router(features_router)
 app.include_router(rewards_router)
 app.include_router(payments_router)
+app.include_router(billing_router)
 
 app.add_middleware(
     CORSMiddleware,

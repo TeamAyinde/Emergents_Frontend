@@ -345,7 +345,9 @@ async def _own_event(eid: str, user: dict) -> dict:
 @router.get("/host/venues", response_model=List[VenueOut])
 async def host_venues(user: HostDep):
     filt = {} if user["role"] == "admin" else {"owner_id": user["id"]}
-    return [VenueOut(**v) async for v in db.venues.find(filt, {"_id": 0}).sort("name", ASCENDING)]
+    from server import _is_featured  # noqa: E402
+
+    return [VenueOut(**v, featured=_is_featured(v)) async for v in db.venues.find(filt, {"_id": 0}).sort("name", ASCENDING)]
 
 
 @router.post("/host/venues", response_model=VenueOut, status_code=201)

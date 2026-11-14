@@ -205,8 +205,9 @@ class TestDirect402:
         DB.users.update_one({"id": u["id"]}, {"$set": {"level": "silver"}})
         mg = ev("Midnight Gold — Grand Opening")
         assert requests.post(f"{API}/events/{mg['id']}/tables/T2/book", json={"party_size": 2}, headers=h(tok)).status_code == 402
+        # iteration 10: Bronze is a paid monthly plan for 'member' tier, so a direct switch needs checkout (402)
         r = requests.post(f"{API}/membership/upgrade", json={"level": "bronze"}, headers=h(tok))
-        assert r.status_code == 200 and r.json()["level"] == "bronze", r.text
+        assert r.status_code == 402, r.text
 
 
 # ---- Host approval no longer issues ticket for paid event ----

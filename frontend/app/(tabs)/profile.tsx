@@ -21,7 +21,7 @@ import { Level, LEVEL_INFO } from "@/src/levels";
 
 const TIER_LABELS: Record<string, string> = {
   free_girl: "LADIES FREE",
-  trial_male: "1ST MONTH FREE",
+  trial_male: "7 DAYS FREE",
   member: "MEMBER",
   premium: "PREMIUM",
   venue: "VENUE PARTNER",
@@ -66,7 +66,12 @@ export default function Profile() {
     try {
       const res = await api.withdraw(user?.wallet_balance ?? 0);
       await refresh();
-      setMsg({ ok: true, text: `Payout of $${res.net.toFixed(2)} requested (fee $${res.fee.toFixed(2)}). It reaches your bank within 1–3 business days.` });
+      setMsg({
+        ok: true,
+        text: res.status === "paid"
+          ? `$${res.net.toFixed(2)} sent to your bank (fee $${res.fee.toFixed(2)}). It lands in 1–3 business days.`
+          : `Payout of $${res.net.toFixed(2)} requested (fee $${res.fee.toFixed(2)}). Link your bank under Bank payouts for automatic transfers.`,
+      });
     } catch (e) {
       setMsg({ ok: false, text: e instanceof Error ? e.message : "Try again" });
     }
@@ -117,6 +122,19 @@ export default function Profile() {
             style={{ width: 130 }}
           />
         </View>
+        ) : null}
+
+        {isStaff && user?.role !== "admin" ? (
+          <Pressable testID="bank-payouts-btn" onPress={() => router.push("/payout-settings")} style={styles.prefRow}>
+            <View style={styles.rowIcon}>
+              <FeatherIcon name="briefcase" size={16} color={colors.brandPrimary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowTitle}>Bank payouts</Text>
+              <Text style={styles.rowSub}>Get your earnings sent to your bank</Text>
+            </View>
+            <FeatherIcon name="chevron-right" size={18} color={colors.muted} />
+          </Pressable>
         ) : null}
 
         {msg ? (

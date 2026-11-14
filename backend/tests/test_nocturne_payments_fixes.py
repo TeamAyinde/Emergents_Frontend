@@ -103,14 +103,18 @@ def cleanup():
 def test_cent_rounding_sent_to_stripe():
     sys.path.insert(0, "/app/backend")
     import stripe
-    from emergentintegrations.payments.stripe.checkout import StripeCheckout
+    # same config as stripe_core: own sk_/rk_ key, else the Emergent test proxy (env key may be a pk_ key)
+    raw = (os.environ.get("STRIPE_API_KEY") or "").strip()
+    own = raw.startswith(("sk_", "rk_")) and "emergent" not in raw
+    stripe.api_key = raw if own else "sk_test_emergent"
+    if not own:
+        stripe.api_base = "https://integrations.emergentagent.com/stripe"
     stripe.ca_bundle_path = certifi.where()
     tok, uid = register(credit=round(92.00 - 36.80, 2))
     r = checkout(tok, kind="ticket", event_id=full_id(EV_OPEN))
     assert r.status_code == 200, r.text
     assert r.json()["amount"] == 36.80
-    st = run(StripeCheckout(api_key=os.environ["STRIPE_API_KEY"], webhook_url="x")
-                                 .get_checkout_status(r.json()["session_id"]))
+    st = stripe.checkout.Session.retrieve(r.json()["session_id"])
     assert st.amount_total == 3680, st.amount_total
     requests.post(f"{API}/payments/cancel/{r.json()['session_id']}", headers=h(tok))
     assert credit(uid) == 55.20

@@ -357,7 +357,7 @@ def _bronze_free(u: dict) -> bool:
     created = u.get("created_at")
     if u.get("membership_tier") == "trial_male" and created:
         created = created if created.tzinfo else created.replace(tzinfo=timezone.utc)
-        return (datetime.now(timezone.utc) - created).days < 30
+        return (datetime.now(timezone.utc) - created).days < 7  # 7-day free trial, then auto-renews
     return False
 
 
@@ -382,8 +382,12 @@ async def change_level(body: UpgradeIn, user: UserDep):
         raise HTTPException(400, "Business accounts already have full access")
     if body.level == user_level(user):
         raise HTTPException(400, "You are already on this level")
-    if LEVEL_RANK[body.level] > LEVEL_RANK[user_level(user)] and not (body.level == "bronze" and _bronze_free(user)):
+    # every paid level is a monthly Stripe plan; only a free Bronze switch happens here
+    if not (body.level == "bronze" and user.get("membership_tier") == "free_girl"):
         raise HTTPException(402, "Payment required — continue to checkout")
+    from billing import cancel_subscription_now  # noqa: E402
+
+    await cancel_subscription_now(user)
     now = datetime.now(timezone.utc)
     await db.users.update_one({"id": user["id"]}, {"$set": {"level": body.level, "level_since": now}})
     await db.membership_payments.insert_one({

@@ -28,7 +28,7 @@ const ROLES: { value: Exclude<Role, "admin">; label: string; blurb: string }[] =
 
 const TIERS: { value: string; label: string; blurb: string; price: string }[] = [
   { value: "free_girl", label: "Ladies", blurb: "Bronze is free forever for women.", price: "Bronze free" },
-  { value: "trial_male", label: "Gentlemen", blurb: "Your first month of Bronze is on us.", price: "1st month free" },
+  { value: "trial_male", label: "Gentlemen", blurb: "7 days of Bronze free, then $14.99/month. Cancel anytime.", price: "7 days free" },
   { value: "member", label: "No perk", blurb: "Start paying from day one.", price: "Standard" },
 ];
 const LEVELS: Level[] = ["bronze", "silver", "gold"];
@@ -63,7 +63,8 @@ export default function SignUp() {
         email: email.trim(), password, full_name: name.trim(), role, membership_tier,
         phone: phone.trim() || undefined, city: city.trim() || undefined, marketing_opt_in: optIn,
       });
-      if (role !== "venue_owner" && level !== "bronze") {
+      // every paid plan is a monthly card subscription; gentlemen get 7 days free before the first charge
+      if (role !== "venue_owner" && !(level === "bronze" && tier === "free_girl")) {
         try {
           await startCheckout({ kind: "membership", level }, router);
         } catch {

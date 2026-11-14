@@ -1,0 +1,48 @@
+{
+  "summary": "Retest of the iteration-9 critical fix: PASS. E2E in browser (390px) with Stripe test card 4242: guest Membership -> Silver 'Subscribe · $49/month' -> Stripe -> /payment-result shows 'Payment confirmed' (payment-status-paid). DB: level silver, subscription_status active, stripe_subscription_id + customer saved, membership_payments row created, tx status paid with no needs_refund. GET /api/membership/subscription returns active=true, status active, renews_at 2026-12-14, manageable=false. Membership screen shows subscription-card 'Silver · monthly / Renews automatically on Dec 14.' with subscription-manage-note, no toggle button, and Silver marked CURRENT. Gentleman trial E2E: sign-up Guest + Gentlemen + Bronze -> Stripe 'Try Nocturne Bronze · 7 days free' -> 'Start trial' with 4242 -> payment-status-paid ($0.00) -> subscription status trialing, trial_used=true, card 'Bronze · free trial / Free until Nov 21, then $14.99/month.' POST /membership/subscription/cancel in proxy mode returns 503 JSON with a readable message. No 502 is left in the backend. Ticket checkout prefills customer_email (verified on the Stripe session). Venues: the FEATURED pill sits top-left on the image, GOLD sits top-right, nothing overlaps and the rating is not clipped; Club Noire is listed first. The Profile Bank payouts subtitle reads 'Get your earnings sent to your bank'. Backend: test_nocturne_billing.py 33/33. Legacy suite (-n 0) 110/110 after one outdated test was fixed. Ticket counts are unchanged (all 0). No deprecated Expo packages detected. No SafeAreaView issues detected.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "billing.activate_subscription (plan change Silver->Gold, proxy mode)", "issue": "Replacing an older plan calls stripe.Subscription.cancel(old). The proxy has no /v1/subscriptions route, so the call fails and is only logged, and the old Stripe subscription stays active. In preview, a plan change leaves 2 live subscriptions (test mode only). The own key fixes this. Consider adding cancel_at_period_end=true to the old sub, or flagging it for admin, when not OWN_KEY."},
+      {"endpoint": "Subscription lifecycle in proxy mode", "issue": "sync_subscription_id returns early when not OWN_KEY, and level_paid_until is never enforced anywhere (server.py/features.py). In preview, a lapsed or cancelled sub never drops the user back to Bronze. Expected until the own key and webhook are set. Noting it as a production-readiness check."},
+      {"endpoint": "env STRIPE_API_KEY", "issue": "The process env STRIPE_API_KEY is a publishable LIVE key (pk_live_...), not a secret key. stripe_core correctly treats it as not OWN_KEY and uses the proxy. The user should provide an sk_/rk_ key when they want own-account mode."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Payment result (trial)", "issues": ["A free trial shows 'Payment confirmed … $0.00'. 'Free trial started' would read better for trial checkouts (kind=membership and amount 0)."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_nocturne_billing.py",
+    "/app/backend/tests/test_nocturne_payments_fixes.py",
+    "/app/backend/tests/stripe_ui_helpers.py",
+    "/app/test_reports/pytest/billing_iter10.xml",
+    "/app/test_reports/pytest/full_iter10.xml"
+  ],
+  "action_items": [
+    "Optional: in proxy mode, handle the old subscription on plan change (Silver->Gold), because Subscription.cancel fails through the proxy and the old sub stays active.",
+    "Optional: payment-result wording for $0 trials ('Free trial started').",
+    "Info: STRIPE_API_KEY in env is pk_live_ (publishable). Own-account features (Connect payouts, cancel/resume auto-renew, renewal sync) need an sk_/rk_ secret key."
+  ],
+  "critical_code_review_comments": [
+    "activate_subscription now uses checkout.Session.retrieve(expand=['subscription']) and works through the proxy. Verified end to end for both a paid sub (active) and a trial (trialing).",
+    "SubscriptionOut.manageable defaults to OWN_KEY, a module constant. This is fine because the key is static per process.",
+    "toggle_renewal checks for a missing plan (400) before proxy mode (503). That order is fine.",
+    "All HTTPException(502) were replaced with 503. Cancel returns application/json, so the detail reaches the app."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_nocturne_billing.py (removed test_proxy_supports_subscription_retrieve; webhook invoice test now expects 200 in proxy mode because sync is skipped; added test_session_expand_subscription_works, test_proxy_mode_subscription_not_manageable_503, test_one_time_checkout_prefills_email)",
+    "/app/backend/tests/test_nocturne_payments_fixes.py (test_cent_rounding_sent_to_stripe used emergentintegrations with the raw env key, which is pk_live_ and fails; it now uses the same own-key/proxy config as stripe_core)",
+    "/app/backend/tests/stripe_ui_helpers.py (notes on Stripe Checkout selectors)"
+  ],
+  "success_rate": {"backend": "100% (billing 33/33, legacy 110/110 with -n 0)", "frontend": "100% (Silver subscription E2E, gentleman trial E2E, venues FEATURED pill, Profile payouts subtitle)"},
+  "seed_data_creation": "None kept. Cleanup: guest@nocturne.app reset to level bronze; stripe_subscription_id, stripe_customer_id, subscription_status, subscription_level, level_paid_until, subscription_cancel_at_period_end and level_since unset (the seed has no level_since; verified trial_used is false). Deleted by session_id 5 payment_transactions from this run (guest x4, trial user x1). Deleted 2 membership_payments by id. Deleted TEST_ user test_trial_f1ad01@nocturne.app. Club Noire featured_until set to null; I had set it in the DB for the pill check, since the boost payment was verified in iteration 9. A guest tx from 10:28 that was not created by me was left alone. The Stripe sandbox still has 2 active TEST-mode subs (sub_1UbiLMC4OfX1G9SSPhnbyEHi, sub_1UbiMLC4OfX1G9SS3f0Ojxe3) that cannot be cancelled through the proxy.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Stripe Checkout (390px): email is prefilled. Fill inputs by placeholder across page.frames: 'Card number', 'MM / YY', 'Security code', 'First and last name', 'ZIP code'. Submit with get_by_role('button', name='Subscribe' | 'Start trial' | 'Pay') searched across frames, NOT button[type=submit] (a hidden one inside a js.stripe.com frame times out). Run pytest with -n 0 (pytest.ini adds xdist). Club Noire id 6d8ab9ad-b3a8-4281-a916-cbdc495f9eff. Proxy: /v1/subscriptions/* returns 404; checkout sessions with expand work.",
+  "rca_of_issue": "Iteration-9 critical bug (subscription activation 404 through the proxy) is fixed: the subscription is now read from the expanded Checkout session. Verified with real 4242 payments for an active sub and a trialing sub."
+}

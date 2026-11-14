@@ -3,33 +3,33 @@
 Money flow (marketplace): the guest pays Nocturne. Nocturne keeps the platform fee, owes the
 venue its share (tracked in `venue_payables`) and owes promoters their commission (wallet).
 """
-import os
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from html import escape
 from typing import Annotated, List, Literal, Optional
 from urllib.parse import quote
 
-import certifi
+import json
+
 import stripe
-from emergentintegrations.payments.stripe.checkout import CheckoutSessionRequest, StripeCheckout
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
-from extras import _bronze_free
+from billing import (
+    activate_subscription, apply_boost, quote_boost, send_transfer, subscription_params, sync_account_id,
+    sync_subscription_id, trial_eligible,
+)
 from features import approved_request, quote_table, save_table
 from server import (
     LEVEL_PRICE, LEVEL_RANK, ReservationIn, amount_due, current_user, db, issue_ticket,
-    quote_reservation, require_level, require_roles, save_reservation, ticket_price, user_level,
+    quote_reservation, require_level, require_roles, save_reservation, ticket_price,
 )
+from stripe_core import call, create_session, g, retrieve_session, session_paid
 
 router = APIRouter(prefix="/api")
 UserDep = Annotated[dict, Depends(current_user)]
 AdminDep = Annotated[dict, Depends(require_roles("admin"))]
-STRIPE_KEY = os.environ["STRIPE_API_KEY"]
-# Stripe's bundled CA list lacks the issuer used by the payments proxy; use the standard Mozilla bundle.
-stripe.ca_bundle_path = certifi.where()
 MIN_CHARGE = 0.50  # Stripe minimum in USD
 APP_SCHEMES = ("exp://", "exps://", "frontend://")
 
@@ -38,12 +38,8 @@ def _now():
     return datetime.now(timezone.utc)
 
 
-def _stripe(origin: str) -> StripeCheckout:
-    return StripeCheckout(api_key=STRIPE_KEY, webhook_url=f"{origin}/api/webhook/stripe")
-
-
 class CheckoutIn(BaseModel):
-    kind: Literal["ticket", "table", "reservation", "membership"]
+    kind: Literal["ticket", "table", "reservation", "membership", "boost"]
     origin_url: str = Field(max_length=300)
     return_url: Optional[str] = Field(default=None, max_length=300)  # native deep link
     event_id: Optional[str] = None
@@ -56,6 +52,7 @@ class CheckoutIn(BaseModel):
     date: Optional[datetime] = None
     notes: Optional[str] = Field(default=None, max_length=500)
     level: Optional[str] = None
+    plan: Optional[str] = None  # boost: week | month
 
 
 class CheckoutOut(BaseModel):
@@ -116,15 +113,24 @@ async def _quote(body: CheckoutIn, user: dict) -> dict:
         return {"total": total, "label": f"{body.service_type.capitalize()} · {venue['name']}",
                 "venue_id": venue["id"], "venue_share": res_in.base_price,
                 "payload": res_in.model_dump(mode="json")}
-    # membership
+    if body.kind == "boost":
+        return await quote_boost(body.venue_id or "", body.plan or "", user)
+    # membership: monthly subscription, auto-renews
     if body.level not in LEVEL_RANK:
         raise HTTPException(400, "Unknown level")
     if user["role"] in ("admin", "venue_owner"):
         raise HTTPException(400, "Business accounts already have full access")
-    if LEVEL_RANK[body.level] <= LEVEL_RANK[user_level(user)] or (body.level == "bronze" and _bronze_free(user)):
-        raise HTTPException(400, "No payment needed for this change")
-    return {"total": LEVEL_PRICE[body.level], "label": f"Nocturne {body.level.capitalize()} · 1 month",
-            "venue_id": None, "payload": {"level": body.level}, "no_credit": True}
+    if body.level == "bronze" and user.get("membership_tier") == "free_girl":
+        raise HTTPException(400, "Bronze is free for you — no payment needed")
+    if (user.get("stripe_subscription_id") and user.get("subscription_level") == body.level
+            and user.get("subscription_status") in ("active", "trialing")):
+        raise HTTPException(400, "You're already on this monthly plan")
+    price = LEVEL_PRICE[body.level]
+    trial = trial_eligible(user, body.level)
+    label = (f"Nocturne {body.level.capitalize()} · 7 days free, then ${price:.2f}/month" if trial
+             else f"Nocturne {body.level.capitalize()} · ${price:.2f}/month")
+    return {"total": 0.0 if trial else price, "label": label, "venue_id": None,
+            "payload": {"level": body.level}, "no_credit": True, "subscription": True}
 
 
 async def _fulfil(tx: dict, payment_session: Optional[str]) -> str:
@@ -145,15 +151,9 @@ async def _fulfil(tx: dict, payment_session: Optional[str]) -> str:
         return (await save_table(p["event_id"], p["table_id"], p["party_size"], user, payment_session)).id
     if tx["kind"] == "reservation":
         return (await save_reservation(ReservationIn(**p), user, payment_session)).id
-    now = _now()
-    await db.users.update_one({"id": user["id"]}, {"$set": {
-        "level": p["level"], "level_since": now, "level_paid_until": now + timedelta(days=30)}})
-    rid = str(uuid.uuid4())
-    await db.membership_payments.insert_one({
-        "id": rid, "user_id": user["id"], "level": p["level"], "amount": tx["amount"],
-        "kind": "stripe", "session_id": payment_session, "created_at": now,
-    })
-    return rid
+    if tx["kind"] == "boost":
+        return await apply_boost(tx)
+    return await activate_subscription(tx, payment_session)
 
 
 async def _complete(session_id: str) -> None:
@@ -180,12 +180,12 @@ async def _close_open(tx: dict) -> None:
     """Closes an unpaid checkout (expires the Stripe session, returns reserved credit).
     If it turns out to be paid, it is fulfilled instead."""
     try:
-        st = await _stripe(tx.get("origin", "")).get_checkout_status(tx["session_id"])
-        if st.payment_status == "paid":
+        st = await retrieve_session(tx["session_id"])
+        if session_paid(st):
             await _complete(tx["session_id"])
             return
-        if st.status == "open":
-            stripe.checkout.Session.expire(tx["session_id"])
+        if g(st, "status") == "open":
+            await call(stripe.checkout.Session.expire, tx["session_id"])
     except Exception:
         pass
     res = await db.payment_transactions.update_one(
@@ -223,7 +223,7 @@ async def create_checkout(body: CheckoutIn, user: UserDep):
     tx = {"id": str(uuid.uuid4()), "user_id": user["id"], "kind": body.kind, "label": q["label"],
           "amount": due, "total": total, "credit_used": credit, "currency": "usd",
           "venue_id": q.get("venue_id"), "payload": q["payload"], "fulfilled": False, "created_at": _now()}
-    if due <= 0:
+    if due <= 0 and not q.get("subscription"):
         # fully covered by reward credit — no card needed
         tx.update(session_id=f"credit_{tx['id']}", status="initiated", payment_status="credit")
         await db.payment_transactions.insert_one(tx)
@@ -240,18 +240,24 @@ async def create_checkout(body: CheckoutIn, user: UserDep):
     else:
         success = f"{origin}/payment-result?session_id={{CHECKOUT_SESSION_ID}}"
         cancel = f"{origin}/payment-result?cancelled=1&tx={tx['id']}"
+    if q.get("subscription"):
+        params = subscription_params(user, q["payload"]["level"])
+    else:
+        params = {"mode": "payment", "payment_method_types": ["card"], "line_items": [{
+            "price_data": {"currency": "usd", "unit_amount": round(due * 100), "product_data": {"name": q["label"][:250]}},
+            "quantity": 1,
+        }], "customer_email": user["email"]}
     try:
-        session = await _stripe(origin).create_checkout_session(CheckoutSessionRequest(
-            amount=float(due) + 0.001, currency="usd", success_url=success, cancel_url=cancel,
-            metadata={"tx_id": tx["id"], "user_id": user["id"], "kind": body.kind},
-        ))
+        session = await create_session(
+            origin, success_url=success, cancel_url=cancel,
+            metadata={"tx_id": tx["id"], "user_id": user["id"], "kind": body.kind}, **params)
     except Exception:
         if credit > 0:
             await db.users.update_one({"id": user["id"]}, {"$inc": {"credit_balance": credit}})
-        raise HTTPException(502, "Payments are unavailable right now — try again")
-    tx.update(session_id=session.session_id, status="initiated", payment_status="unpaid", origin=origin)
+        raise HTTPException(503, "Payments are unavailable right now — try again")
+    tx.update(session_id=session.id, status="initiated", payment_status="unpaid", origin=origin)
     await db.payment_transactions.insert_one(tx)
-    return CheckoutOut(url=session.url, session_id=session.session_id, amount=due)
+    return CheckoutOut(url=session.url, session_id=session.id, amount=due)
 
 
 async def _refund_credit(tx: dict) -> None:
@@ -269,12 +275,12 @@ async def payment_status(session_id: str, user: UserDep):
         raise HTTPException(404, "Payment not found")
     if not tx.get("fulfilled") and tx.get("status") not in ("expired", "cancelled") and not session_id.startswith("credit_"):
         try:
-            st = await _stripe(tx.get("origin", "")).get_checkout_status(session_id)
+            st = await retrieve_session(session_id)
         except Exception:
             st = None
-        if st and st.payment_status == "paid":
+        if st and session_paid(st):
             await _complete(session_id)
-        elif st and st.status == "expired":
+        elif st and g(st, "status") == "expired":
             await db.payment_transactions.update_one({"session_id": session_id}, {"$set": {"status": "expired"}})
             await _refund_credit(tx)
         tx = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
@@ -298,13 +304,27 @@ async def cancel_payment(session_id: str, user: UserDep):
 
 @router.post("/webhook/stripe")
 async def stripe_webhook(request: Request):
-    payload = await request.body()
+    """Never trusts the payload: every object is re-fetched from Stripe before acting."""
     try:
-        ev = await _stripe("").handle_webhook(payload, request.headers.get("Stripe-Signature"))
+        ev = json.loads(await request.body())
+        typ, obj = ev["type"], ev["data"]["object"]
     except Exception:
         raise HTTPException(400, "Invalid webhook")
-    if ev.payment_status == "paid" and ev.session_id:
-        await _complete(ev.session_id)
+    try:
+        if typ.startswith("checkout.session."):
+            if session_paid(await retrieve_session(obj["id"])):
+                await _complete(obj["id"])
+        elif typ.startswith("customer.subscription."):
+            await sync_subscription_id(obj["id"])
+        elif typ.startswith("invoice."):
+            # older API versions: invoice.subscription; newer: invoice.parent.subscription_details.subscription
+            sub_id = obj.get("subscription") or (((obj.get("parent") or {}).get("subscription_details") or {}).get("subscription"))
+            if sub_id:
+                await sync_subscription_id(sub_id)
+        elif typ == "account.updated":
+            await sync_account_id(obj["id"])
+    except stripe.StripeError:
+        raise HTTPException(400, "Unknown Stripe object")
     return {"received": True}
 
 
@@ -373,9 +393,19 @@ async def admin_payouts(_: AdminDep):
 
 @router.post("/admin/payouts/venues/{venue_id}/settle")
 async def settle_venue(venue_id: str, _: AdminDep):
-    res = await db.venue_payables.update_many({"venue_id": venue_id, "status": "owed"},
-                                              {"$set": {"status": "paid", "paid_at": _now()}})
-    return {"settled": res.modified_count}
+    """Pays the venue owner through Stripe Connect when they've linked a bank, otherwise just marks it paid."""
+    rows = [r async for r in db.venue_payables.find({"venue_id": venue_id, "status": "owed"}, {"_id": 0, "id": 1, "amount": 1})]
+    if not rows:
+        return {"settled": 0, "transfer_id": None}
+    ids = [r["id"] for r in rows]
+    venue = await db.venues.find_one({"id": venue_id}, {"_id": 0, "owner_id": 1})
+    try:
+        tid = await send_transfer((venue or {}).get("owner_id", ""), sum(r["amount"] for r in rows), "venue", ids[0])
+    except stripe.StripeError as exc:
+        raise HTTPException(503, g(exc, "user_message") or "Stripe transfer failed — check your Stripe balance")
+    res = await db.venue_payables.update_many({"id": {"$in": ids}, "status": "owed"},
+                                              {"$set": {"status": "paid", "paid_at": _now(), "transfer_id": tid}})
+    return {"settled": res.modified_count, "transfer_id": tid}
 
 
 @router.post("/admin/withdrawals/{wid}/paid")

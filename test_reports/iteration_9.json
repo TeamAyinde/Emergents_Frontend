@@ -1,0 +1,57 @@
+{
+  "summary": "Billing retest plus E2E in the browser with Stripe test card 4242. Backend: the billing reservation test was fixed and test_nocturne_billing.py now passes 28/28. The full legacy suite passes 138/138 when run with -n 0, after one outdated assertion was updated. 3 new regression tests were added: 2 pass (webhook invoice handling, legacy and parent shapes) and 1 fails on purpose to document the proxy bug. E2E (b) boost works end to end: venue owner pays $49 for 7 days, payment is confirmed, the Host Studio card shows FEATURED with a 'Featured until' date, Venues tab shows the FEATURED badge with Club Noire first, and the Home feed lists the Club Noire event first with FEATURED. Sign-up 'Gentlemen · 7 days free', the trial Bronze card '7 days free, then $14.99/mo' with 'Start 7-day free trial', the Stripe trial page and promoter Bank payouts 'Coming soon' all PASS. E2E (a) membership subscription FAILS (CRITICAL): the card is charged and returns to /payment-result, but the screen shows 'We couldn't complete your booking'. The transaction is marked failed with needs_refund and the user stays Bronze. Root cause: the Emergent Stripe proxy does not route /v1/subscriptions/* and returns 404. 'Cancel auto-renew' is also broken: it returns 502, which Cloudflare replaces with an HTML page, so the UI shows 'Request failed'. No deprecated Expo packages detected. No SafeAreaView issues detected.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "Fulfilment of POST /api/payments/checkout kind=membership (billing.activate_subscription)", "issue": "Calls stripe.Subscription.retrieve(sub_id). The Emergent proxy returns 404 with a plain-text 'page not found' body. _complete catches the error and marks the paid transaction status=failed, needs_refund=true, and the user's level is never changed. This happens on every paid subscription and on every gentlemen 7-day trial signup in preview, because the trial path takes the same route. Verified: checkout.Session.retrieve(session_id, expand=['subscription']) DOES work through the proxy and returns the full subscription object (status active).", "priority": "CRITICAL"},
+      {"endpoint": "POST /api/membership/subscription/{cancel|resume}", "issue": "stripe.Subscription.modify returns 404 through the proxy, so the endpoint always responds 502. The same 404 hits Subscription.cancel (cancel_subscription_now, replacing an old plan) and Subscription.retrieve (sync_subscription_id, used by GET /membership/subscription and the webhooks). With the proxy fallback, auto-renew can never be cancelled or resumed.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "HTTPException(502, ...) in billing.py:168,261 and payments.py:257,405", "issue": "The preview ingress (Cloudflare) replaces any upstream 502 with its own HTML 'Bad gateway' page. The JSON detail is lost and the app shows the generic 'Request failed'. Use 503 or 424 instead."},
+      {"endpoint": "GET /api/membership/subscription", "issue": "Calls Stripe sync on every GET and silently swallows the failure. On the proxy this is a wasted failing request each time; the screen shows stale DB status."},
+      {"endpoint": "Boost / one-time checkout", "issue": "customer_email is not prefilled for payment-mode sessions (boost), so the venue owner must type their email on Stripe. Subscription sessions do prefill it."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Membership toggle error", "issue": "Tapping 'Cancel auto-renew' shows the generic 'Request failed' instead of a helpful message. Causes: the backend 502 is masked, and the proxy does not support subscriptions.", "testID": "subscription-toggle-btn / membership-msg", "priority": "HIGH"}
+    ],
+    "integration_issues": [
+      {"flow": "Guest Silver subscription via Stripe (4242)", "issue": "Stripe charges the card and redirects to /payment-result, which shows payment-status-failed ('We couldn't complete your booking'). Afterwards no subscription card appears, because stripe_subscription_id is never saved.", "affected_testIDs": ["membership-change-btn", "payment-status-failed", "subscription-card"]}
+    ],
+    "design_issues": [
+      {"screen": "Explore > Venues grid", "issues": ["The FEATURED pill shares the category row with the rating, so on a 390px card the rating star and value are pushed off and clipped (Club Noire card). Move the pill to the image overlay or onto its own line."]},
+      {"screen": "Profile > Bank payouts row", "issues": ["The subtitle 'Link your bank for automatic transfers' still shows while the feature is 'Coming soon'."]},
+      {"screen": "Membership", "issues": ["The Bronze card shows the '7 days free' price to a user who already has an active Silver plan, because trial_available ignores the current plan. This is a minor wording issue."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_nocturne_billing.py",
+    "/app/backend/tests/probe_proxy_subscriptions.py",
+    "/app/test_reports/pytest/billing_iter9.xml",
+    "/app/test_reports/pytest/full_iter9.xml"
+  ],
+  "action_items": [
+    "CRITICAL: In billing.activate_subscription, retrieve the session with expand=['subscription'] (stripe.checkout.Session.retrieve(session_id, expand=['subscription'])). Use the embedded subscription object, not stripe.Subscription.retrieve. This was verified to work through the proxy.",
+    "HIGH: In proxy mode (not OWN_KEY), Subscription.modify, cancel, retrieve and list all return 404. Either (a) expose a 'manageable' flag (like Connect's 'available') and hide or explain the Cancel auto-renew button until the own key is set, or (b) track cancel_at_period_end locally and make sync, replace-old-plan and cancel tolerant of the proxy. Also: the Stripe sandbox now holds an active test subscription for guest@nocturne.app (sub_1Ubi1OC4OfX1G9SSjlqrPdMP, cus_VcxxUOAxBBbnwA). It cannot be cancelled through the proxy. It is test mode only, so there is no real charge.",
+    "Replace HTTPException(502) with 503 (or 424) in billing.py:168,261 and payments.py:257,405 so the error detail reaches the app.",
+    "Venue card: stop the FEATURED pill from clipping the rating.",
+    "Optional: prefill customer_email for payment-mode checkouts. Change the Bank payouts row subtitle while payouts are unavailable."
+  ],
+  "critical_code_review_comments": [
+    "iteration-9 billing tests only created Checkout sessions and never completed a subscription, so the proxy's lack of /v1/subscriptions support was missed. The new test test_proxy_supports_subscription_retrieve fails on purpose to document it.",
+    "Webhook invoice handling reads both invoice.subscription and invoice.parent.subscription_details.subscription. Verified: an unlinked sub returns 200, a linked sub triggers a Stripe lookup, and a fake payload does not change DB state.",
+    "Legacy test cleanups decrement events.tickets_sold. Running with xdist (-n auto) double-decrements: Velvet Sessions was -2 and Industry Fridays -1. Both were restored to the real ticket count (0). Always run the suite with -n 0."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_nocturne_billing.py (reservation test now registers the TEST_ user at the venue's min_level; added 3 iteration-10 tests)",
+    "/app/backend/tests/test_nocturne_payments.py (Bronze downgrade for the member tier now expects 402, the new paid-Bronze rule)",
+    "/app/backend/tests/probe_proxy_subscriptions.py (new RCA probe)"
+  ],
+  "success_rate": {"backend": "97% (140/141 incl. the intentional proxy-bug test; legacy 138/138 with -n 0)", "frontend": "80% (4/5 flows: boost E2E, sign-up trial text, trial Bronze card, payouts Coming soon pass; membership subscription E2E fails)"},
+  "seed_data_creation": "None kept. Removed by id: 6 payment_transactions (guest x3, venue x2, TEST_ UI user x1), 1 boost, Club Noire featured_until, and TEST_ user test_ui_eff00f@nocturne.app. guest@nocturne.app was never modified because activation failed, and it was verified unchanged: bronze with no subscription fields. events.tickets_sold for Velvet Sessions and Industry Fridays was restored from -2/-1 to 0, the actual ticket count; my first -n auto run caused this.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Stripe Checkout fields are inside a js.stripe.com iframe. Iterate page.frames and use input placeholders 'Card number', 'MM / YY', 'Security code', 'First and last name', 'ZIP code' (plus 'you@example.com' for payment mode, where email is not prefilled). Submit with button[type=submit] inside the frame. Run pytest with -n 0. Proxy facts: checkout/sessions works (incl. expand); /v1/subscriptions/* and sessions/{id}/expire return 404. Club Noire id 6d8ab9ad-b3a8-4281-a916-cbdc495f9eff. After the E2E, reset guest subscription fields and venue featured_until.",
+  "rca_of_issue": "Repro: log in as guest, go to /membership, choose Silver, tap 'Subscribe · $49/month', pay with 4242 on Stripe. You return to /payment-result?session_id=..., which shows payment-status-failed. Backend log: GET https://integrations.emergentagent.com/stripe/v1/subscriptions/sub_... returns 404. In payments._complete, activate_subscription raises APIError ('404 page not found' plain text, meaning the route is not proxied rather than a Stripe JSON 404). The exception is caught and the transaction gets status=failed, needs_refund=true. Mitigation: read the subscription via Session.retrieve(..., expand=['subscription']), and gate or adapt the modify/cancel/retrieve paths when not OWN_KEY."
+}

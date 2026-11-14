@@ -18,6 +18,7 @@ import { api, Venue } from "@/src/api";
 import { colors, radius, spacing } from "@/src/theme";
 import { LuxeList, JournalList } from "@/src/explore-lists";
 import { LevelBadge } from "@/src/levels";
+import { FeaturedBadge } from "@/src/featured-badge";
 
 export default function Venues() {
   const insets = useSafeAreaInsets();
@@ -87,6 +88,11 @@ function VenueCard({ v, onPress }: { v: Venue; onPress: () => void }) {
     <Pressable testID={`venue-${v.id}`} onPress={onPress} style={styles.card}>
       <Image source={v.image_url} style={styles.cardImg} contentFit="cover" />
       <LevelBadge level={v.min_level} floating />
+      {v.featured ? (
+        <View style={styles.featuredFloat}>
+          <FeaturedBadge testID={`venue-featured-${v.id}`} />
+        </View>
+      ) : null}
       <View style={styles.cardBody}>
         <View style={styles.rowBetween}>
           <Text style={styles.cat}>{v.category.toUpperCase()}</Text>
@@ -126,6 +132,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border,
   },
   cardImg: { width: "100%", height: 130 },
+  featuredFloat: { position: "absolute", top: spacing.sm, left: spacing.sm },
   cardBody: { padding: spacing.md, gap: 4 },
   cat: { color: colors.brandPrimary, fontSize: 9, letterSpacing: 1.5, fontWeight: "700" },
   rating: { flexDirection: "row", alignItems: "center", gap: 2 },

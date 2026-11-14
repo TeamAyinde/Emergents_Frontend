@@ -64,3 +64,10 @@ Money-making hospitality app (founder has construction/club/nightlife/lounge/res
 - Admin Payouts screen (venues owed, pending promoter withdrawals, mark paid); host `/api/host/payouts`
 - Emergent-managed Google sign-in (welcome + sign-in) alongside email/password; issues the same JWT
 - Backlog: Stripe Connect automatic bank payouts (needs the owner's own Stripe account with Connect), recurring membership billing, Apple sign-in (native build)
+
+## Iteration 8 — Own Stripe key, subscriptions, boosts, Connect payouts
+- stripe_core.py: uses owner's STRIPE_API_KEY when it's a secret key (sk_/rk_), else falls back to the Emergent test proxy. Auto-registers webhook with own key. Webhook re-fetches every object from Stripe (no payload trust)
+- Memberships are monthly Stripe subscriptions (auto-renew); gentlemen (trial_male) get 7-day free trial on Bronze with card upfront, then $14.99/mo. Cancel/resume auto-renew in Membership screen. Free Bronze for ladies
+- Featured venue boosts: $49/7 days, $149/30 days (Host Studio). Featured venues + their events sorted first with FEATURED badge
+- Stripe Connect Express for promoters & venue owners (/payout-settings). Withdrawals auto-transfer when bank linked; admin "settle" transfers to venue owner when linked. Requires own secret key + Connect enabled (preview currently uses proxy → shows "Coming soon")
+- PENDING: user's STRIPE_API_KEY currently holds a publishable key (pk_live) in live slot and empty test slot — needs sk_test_/sk_live_ secret keys

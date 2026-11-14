@@ -7,6 +7,7 @@ import FeatherIcon from "@react-native-vector-icons/feather";
 import { api } from "@/src/api";
 import { colors, radius, spacing } from "@/src/theme";
 import { LuxButton } from "@/src/ui";
+import { BoostCard } from "@/src/boost-card";
 
 export default function HostStudio() {
   const router = useRouter();
@@ -38,6 +39,9 @@ export default function HostStudio() {
               <Text style={styles.muted}>
                 {venues?.length ? `Your venues: ${venues.map((v) => v.name).join(", ")}` : "Add your venue when you post your first event."}
               </Text>
+              {venues?.length ? <Text style={styles.section}>Featured boosts</Text> : null}
+              {venues?.map((v) => <BoostCard key={v.id} venue={v} />)}
+              <Text style={styles.section}>Your events</Text>
             </View>
           }
           ListEmptyComponent={<Text style={styles.muted}>No events yet.</Text>}
@@ -84,6 +88,7 @@ const styles = StyleSheet.create({
   },
   title: { color: colors.onSurface, fontSize: 17, fontWeight: "700" },
   muted: { color: colors.muted, fontSize: 13, lineHeight: 19 },
+  section: { color: colors.onSurface, fontSize: 18, fontWeight: "800", marginTop: spacing.sm },
   card: { backgroundColor: colors.surfaceSecondary, borderRadius: radius.lg, padding: spacing.lg, gap: spacing.xs, borderWidth: 1, borderColor: colors.border },
   rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: spacing.sm },
   cardTitle: { color: colors.onSurface, fontSize: 16, fontWeight: "800", flex: 1 },

@@ -75,6 +75,8 @@ export type Venue = {
   price_range: string;
   description: string;
   min_level: string;
+  featured_until?: string | null;
+  featured?: boolean;
 };
 
 export type EventItem = {
@@ -95,6 +97,7 @@ export type EventItem = {
   plus_one_limit: number;
   guest_list_visible: boolean;
   has_tables: boolean;
+  featured?: boolean;
 };
 
 export type Ticket = {
@@ -191,6 +194,12 @@ export const api = {
     request<{ settled: number }>(`/admin/payouts/venues/${venueId}/settle`, { method: "POST" }),
   markWithdrawalPaid: (id: string) => request<{ ok: boolean }>(`/admin/withdrawals/${id}/paid`, { method: "POST" }),
   hostPayouts: () => request<{ owed: number; paid: number }>("/host/payouts"),
+  subscription: () => request<Subscription>("/membership/subscription"),
+  setRenewal: (action: "cancel" | "resume") =>
+    request<Subscription>(`/membership/subscription/${action}`, { method: "POST" }),
+  connectStatus: () => request<ConnectStatus>("/connect/status"),
+  connectOnboard: (body: { origin_url: string; return_url?: string }) =>
+    request<{ url: string }>("/connect/onboard", { method: "POST", body: JSON.stringify(body) }),
 
   listEvents: () => request<EventItem[]>("/events?upcoming=true"),
   getEvent: (id: string) => request<EventItem>(`/events/${id}`),
@@ -324,7 +333,13 @@ export type CheckoutBody =
   | { kind: "ticket"; event_id: string; quantity: number; promoter_code?: string }
   | { kind: "table"; event_id: string; table_id: string; party_size: number }
   | { kind: "reservation"; venue_id: string; date: string; party_size: number; service_type: string; notes?: string }
-  | { kind: "membership"; level: string };
+  | { kind: "membership"; level: string }
+  | { kind: "boost"; venue_id: string; plan: "week" | "month" };
+export type Subscription = {
+  active: boolean; status: string | null; level: string | null; renews_at: string | null;
+  cancel_at_period_end: boolean; trial_available: boolean; manageable: boolean;
+};
+export type ConnectStatus = { available: boolean; connected: boolean; payouts_enabled: boolean; details_submitted: boolean };
 export type CheckoutResult = { url: string | null; session_id: string; amount: number; paid_with_credit: boolean; result_id: string | null };
 export type PaymentStatus = {
   session_id: string; kind: CheckoutBody["kind"]; label: string; amount: number;
