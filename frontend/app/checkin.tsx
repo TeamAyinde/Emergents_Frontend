@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { useRef, useState } from "react";
@@ -27,7 +28,9 @@ export default function CheckIn() {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
 
-  const canScan = user?.role === "promoter" || user?.role === "venue_owner" || user?.role === "admin";
+  const isHostRole = user?.role === "promoter" || user?.role === "venue_owner" || user?.role === "admin";
+  const { data: duty } = useQuery({ queryKey: ["door-duty"], queryFn: api.doorDuty, enabled: !!user && !isHostRole });
+  const canScan = isHostRole || !!duty?.venues.length;
   const [permission, requestPermission] = useCameraPermissions();
   const [scanning, setScanning] = useState(false);
   const [explain, setExplain] = useState(false);
@@ -82,7 +85,7 @@ export default function CheckIn() {
           <View style={styles.restricted}>
             <FeatherIcon name="lock" size={32} color={colors.brandPrimary} />
             <Text style={styles.restrictedTitle}>Staff only</Text>
-            <Text style={styles.restrictedText}>Only promoters, venues and admins can scan guests.</Text>
+            <Text style={styles.restrictedText}>Only promoters, venues, admins and door staff can scan guests.</Text>
           </View>
         ) : (
           <>

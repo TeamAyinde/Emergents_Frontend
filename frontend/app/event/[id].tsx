@@ -37,7 +37,16 @@ export default function EventDetails() {
   const scrolled = useRef(false);
 
   const { data: ev, isLoading } = useQuery({ queryKey: ["event", id], queryFn: () => api.getEvent(id!) });
-  const { data: deal } = useQuery({ queryKey: ["my-deal", id], queryFn: () => api.myDeal(id!), enabled: !!user });
+  const { data: deal } = useQuery({
+    queryKey: ["my-deal", id],
+    queryFn: () => api.myDeal(id!),
+    enabled: !!user,
+    // re-check right after the deal ends so the banner and discount disappear on time
+    refetchInterval: (q) => {
+      const exp = q.state.data?.expires_at;
+      return exp ? Math.max(1000, Math.min(60000, new Date(exp).getTime() - Date.now() + 1000)) : false;
+    },
+  });
   const { data: guests } = useQuery({ queryKey: ["guests", id], queryFn: () => api.eventGuests(id!) });
   const { data: myReqs } = useQuery({ queryKey: ["mine-requests"], queryFn: () => api.myRequests() });
   const { data: myTickets } = useQuery({ queryKey: ["mine-tickets"], queryFn: () => api.myTickets() });
@@ -74,7 +83,8 @@ export default function EventDetails() {
   const gross = ev.price * qty;
   const discount = gross * LEVEL_INFO[lvl].discount;
   const dealPct = deal?.pct ?? 0;
-  const dealOff = (gross - discount) * (dealPct / 100);
+  const dealQty = Math.min(qty, deal?.qty ?? 0);
+  const dealOff = ((gross - discount) / qty) * dealQty * (dealPct / 100);
   const base = gross - discount - dealOff;
   const fee = base * 0.15;
   const locked = !canAccess(lvl, ev.min_level);
@@ -137,7 +147,10 @@ export default function EventDetails() {
           {dealPct > 0 && !myTicket ? (
             <View style={styles.deal} testID="deal-banner">
               <FeatherIcon name="zap" size={16} color={colors.onBrandPrimary} />
-              <Text style={styles.dealText}>Last-minute deal: {dealPct}% off, just for you</Text>
+              <Text style={styles.dealText}>
+                Last-minute deal: {dealPct}% off {deal!.qty > 1 ? `up to ${deal!.qty} tickets` : "1 ticket"}, just for you
+                {deal?.expires_at ? ` · ends ${new Date(deal.expires_at).toLocaleTimeString("en", { hour: "numeric", minute: "2-digit" })}` : ""}
+              </Text>
             </View>
           ) : null}
 

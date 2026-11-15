@@ -1,0 +1,53 @@
+{
+  "summary": "Iteration 21 features: Deal Expiry Timer, Deal Party Limit, Door Staff Access, Night Summary Report, 'summary' email pref. Backend: 16/16 new tests pass (tests/test_nocturne_iter21_deals_staff_summary.py). Regression: iter20 (11/11, after updating one assertion for the new my-deal shape) and iter19 alerts all pass, 38/38 in the combined run. Frontend (375x667) works end to end: DealCard duration chips deal-hours-1/2/4/8 (44px tall) -> 4h + deal-20 -> 'ends in 4h 0m' (DB confirms a 4.0h expiry and user_qty {guest: 2}). The guest deal-banner says 'up to 2 tickets · ends 10:23 AM' and the price breakdown caps the discount at 2 tickets ($8 / $16 / $16 for qty 1/2/3; totals $36.80 / $73.60 / $119.60, matching server math). Host Studio door-staff-card: venue chips, the unknown-email error and inviting guest@ (staff-row appears) all work. As staff, the guest sees door-duty-btn -> /door listing duty-event-* -> door-scan-btn -> /checkin, and a manual code check-in succeeds. Tapping an event opens /host/live/{id} with no DealCard. After removal, door-duty-btn is hidden, /checkin shows 'Staff only' and /door shows an empty state. pref-summary shows only for the venue owner. One bug: staff-remove does nothing on web (Alert.alert with buttons is a no-op in react-native-web). No deprecated Expo packages detected.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "push (routes/push.py)", "issue": "Backend log shows 'EMERGENT_PUSH_KEY missing or invalid' (401) on real pushes. This is non-blocking, and tests monkeypatch send_push."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "DoorStaffCard remove", "issue": "Tapping staff-remove-* on web does nothing. Alert.alert with buttons is a no-op in react-native-web: no dialog fires, the row stays and no DELETE is sent. Use a Platform.OS==='web' window.confirm fallback, the same pattern as app/admin/payouts.tsx confirm(). Reference: /app/frontend/src/door-staff-card.tsx:29-33", "testID": "staff-remove-*", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [
+      {"flow": "Guest deal expiry while screen open", "issue": "The my-deal query is fetched once and never refetched or hidden when expires_at passes. The banner and the 'Last-minute deal' price row stay up while the server charges full price, so the UI total and the checkout amount disagree. Hide the deal client-side once expires_at < now, or set refetchInterval / staleTime to the expiry time.", "affected_testIDs": ["deal-banner", "buy-ticket-btn"]}
+    ],
+    "design_issues": [
+      {"screen": "Host Studio / Door staff card", "issues": ["Venue chips (staff-venue-*) are 36px tall, below the 44px touch target"]},
+      {"screen": "/checkin not-allowed state", "issues": ["The copy 'Only promoters, venues and admins can scan guests.' doesn't mention door staff and should point non-staff to their venue owner"]}
+    ],
+    "react_native_issues": [
+      {"component": "Alert.alert confirm on web", "issue": "The Alert.alert confirm in DoorStaffCard has no web fallback, so the action is unreachable in web preview. Reference: /app/frontend/src/door-staff-card.tsx:30"}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_nocturne_iter21_deals_staff_summary.py",
+    "/app/backend/tests/test_nocturne_iter20_live_deals.py",
+    "/app/backend/tests/iter21_ui_seed.py",
+    "/app/test_reports/pytest/pytest_iter21.xml"
+  ],
+  "action_items": [
+    "Add a web fallback (window.confirm) to DoorStaffCard.confirmRemove so staff can be removed in web preview",
+    "Event screen: hide or refetch the deal once deal.expires_at passes, so the UI price matches the server",
+    "Make staff venue chips at least 44px tall",
+    "Update the /checkin 'Staff only' copy to mention door staff"
+  ],
+  "critical_code_review_comments": [
+    "ticket_price applies the deal to min(qty, user_qty) and honours expires_at correctly. Re-using the deal on a second purchase is prevented by the one-ticket-per-event guard.",
+    "send_night_summaries sets summary_sent before sending, so a push/email failure is never retried (acceptable, but worth noting). Recipients are deduplicated in notify().",
+    "night_stats uses strftime('%-I'), which is glibc-only. Fine on Linux, but not portable.",
+    "The staff live view still returns waitlist count and recent arrival first names. That fits 'live counter' scope, but confirm it's intended."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_nocturne_iter20_live_deals.py (my-deal assertion updated to the {pct, qty, expires_at} shape)",
+    "/app/backend/tests/test_nocturne_iter21_deals_staff_summary.py (new)",
+    "/app/backend/tests/iter21_ui_seed.py (new)"
+  ],
+  "success_rate": {"backend": "100% (16/16 new, 38/38 incl. iter19+iter20 regression)", "frontend": "~93% (all flows pass except staff remove on web)"},
+  "seed_data_creation": "UI used a TEST_ event at Club Noire, a pending waitlist request for guest@ (qty 2) and a TEST_ user's ticket via iter21_ui_seed.py. Guest@ was invited as door staff through the UI and then removed via the API. All of it was cleaned by id; door_staff rows created were deactivated and deleted. The pre-existing inactive door_staff row (main agent's) is untouched. Afterwards: 0 events with a deal, 0 with summary_sent, 0 TEST_ events/users. No wallet changes.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: cd /app/backend/tests && python -m pytest test_nocturne_iter21_deals_staff_summary.py -n 0. UI login works via the /sign-in testIDs (localStorage token injection did not work). The night-summary test calls send_night_summaries() in-process with send_push and send_email monkeypatched. No seeded events fall in the 10-36h window right now; if they do, the call will flag them summary_sent.",
+  "rca_of_issue": "staff-remove no-op: react-native-web implements Alert.alert as an empty function, so the onPress of the 'Remove' button is never reached on web."
+}

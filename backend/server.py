@@ -658,10 +658,16 @@ async def purchase_ticket(
 
 
 def ticket_price(event: dict, user: dict, qty: int) -> tuple[float, float, float]:
-    """(base after member discount and any last-minute deal for this guest, platform fee, total) for `qty` tickets."""
+    """(base after member discount and any live last-minute deal for this guest, platform fee, total) for `qty` tickets.
+    A deal covers only as many tickets as the guest asked for on the waitlist, until it expires."""
+    each = event["price"] * (1 - LEVEL_TICKET_DISCOUNT[user_level(user)])
     deal = event.get("deal") or {}
-    deal_pct = deal.get("pct", 0) if user.get("id") in deal.get("user_ids", []) else 0
-    base = round(event["price"] * qty * (1 - LEVEL_TICKET_DISCOUNT[user_level(user)]) * (1 - deal_pct / 100), 2)
+    uid = user.get("id")
+    allowed = (deal.get("user_qty") or {}).get(uid) or (1 if uid in deal.get("user_ids", []) else 0)
+    exp = deal.get("expires_at")
+    if exp and (exp if exp.tzinfo else exp.replace(tzinfo=timezone.utc)) <= datetime.now(timezone.utc):
+        allowed = 0
+    base = round(each * qty - each * min(qty, allowed) * deal.get("pct", 0) / 100, 2)
     fee = round(base * PLATFORM_FEE_PCT, 2)
     return base, fee, round(base + fee, 2)
 
@@ -750,7 +756,7 @@ async def my_tickets(user: Annotated[dict, Depends(current_user)]):
 @api.post("/tickets/{ticket_id}/checkin", response_model=TicketOut)
 async def check_in(
     ticket_id: str,
-    user: Annotated[dict, Depends(require_roles("promoter", "venue_owner", "admin"))],
+    user: Annotated[dict, Depends(current_user)],
 ):
     code = ticket_id.strip().lstrip("#").lower()
     if len(code) == 36:
@@ -762,6 +768,12 @@ async def check_in(
         t = None
     if not t:
         raise HTTPException(404, "Ticket not found")
+    if user["role"] not in ("promoter", "venue_owner", "admin"):
+        from routes.staff import is_door_staff  # noqa: E402
+
+        ev = await db.events.find_one({"id": t["event_id"]}, {"_id": 0, "venue_id": 1})
+        if not await is_door_staff((ev or {}).get("venue_id"), user["id"]):
+            raise HTTPException(403, "Only door staff for this venue can check in this ticket")
     res = await db.tickets.update_one(
         {"id": t["id"], "checked_in": False},
         {"$set": {"checked_in": True, "checked_in_at": datetime.now(timezone.utc)}},
@@ -950,6 +962,7 @@ from routes.notify import router as notify_router  # noqa: E402
 from routes.engage import router as engage_router  # noqa: E402
 from routes.push import router as push_router  # noqa: E402
 from routes.hostlive import router as hostlive_router  # noqa: E402
+from routes.staff import router as staff_router  # noqa: E402
 
 app.include_router(api)
 app.include_router(extras_router)
@@ -962,6 +975,7 @@ app.include_router(notify_router)
 app.include_router(engage_router)
 app.include_router(push_router)
 app.include_router(hostlive_router)
+app.include_router(staff_router)
 
 app.add_middleware(
     CORSMiddleware,

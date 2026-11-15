@@ -43,6 +43,7 @@ export default function Profile() {
     }, [refresh]),
   );
   const { data: tickets } = useQuery({ queryKey: ["mine-tickets"], queryFn: () => api.myTickets() });
+  const { data: duty } = useQuery({ queryKey: ["door-duty"], queryFn: api.doorDuty });
   const { data: reservations } = useQuery({
     queryKey: ["mine-reservations"],
     queryFn: () => api.myReservations(),
@@ -305,6 +306,19 @@ export default function Profile() {
           </View>
           <FeatherIcon name="chevron-right" size={18} color={colors.muted} />
         </Pressable>
+
+        {duty?.venues.length ? (
+          <Pressable testID="door-duty-btn" onPress={() => router.push("/door")} style={styles.prefRow}>
+            <View style={styles.rowIcon}>
+              <FeatherIcon name="maximize" size={16} color={colors.brandPrimary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowTitle}>Door duty</Text>
+              <Text style={styles.rowSub}>Scan tickets at {duty.venues.join(", ")}</Text>
+            </View>
+            <FeatherIcon name="chevron-right" size={18} color={colors.muted} />
+          </Pressable>
+        ) : null}
 
         {user?.role === "venue_owner" || user?.role === "admin" ? (
           <Pressable testID="host-studio-btn" onPress={() => router.push("/host")} style={styles.prefRow}>

@@ -2,6 +2,7 @@
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
@@ -208,9 +209,77 @@ async def _recap_emails(items: list, since: datetime) -> None:
 
 async def alerts_loop() -> None:
     while True:
-        for job in (send_waitlist_spots, send_table_offers, send_promoter_recap):
+        for job in (send_waitlist_spots, send_table_offers, send_promoter_recap, send_night_summaries):
             try:
                 await job()
             except Exception:
                 log.exception("%s failed", job.__name__)
         await asyncio.sleep(ALERTS_EVERY_S)
+
+
+# ---------- Morning-after night summary (venue owners) ----------
+
+VENUE_TZ = ZoneInfo("America/Los_Angeles")  # every venue is in California
+SUMMARY_AFTER = timedelta(hours=10)  # roughly the morning after doors
+
+
+async def night_stats(ev: dict) -> dict:
+    eid = ev["id"]
+    tickets = await db.tickets.find({"event_id": eid}, {"_id": 0, "id": 1, "quantity": 1, "checked_in": 1, "checked_in_at": 1}).to_list(None)
+    tables = await db.table_bookings.find({"event_id": eid, "status": "confirmed"}, {"_id": 0, "id": 1}).to_list(None)
+    sold = sum(t["quantity"] for t in tickets)
+    arrived = sum(t["quantity"] for t in tickets if t.get("checked_in"))
+    hours: dict = {}
+    for t in tickets:
+        if t.get("checked_in") and t.get("checked_in_at"):
+            h = _aware(t["checked_in_at"]).astimezone(VENUE_TZ).replace(minute=0, second=0, microsecond=0)
+            hours[h] = hours.get(h, 0) + t["quantity"]
+    peak = max(hours.items(), key=lambda kv: kv[1]) if hours else None
+    ids = [t["id"] for t in tickets] + [b["id"] for b in tables]
+    agg = await db.venue_payables.aggregate([{"$match": {"record_id": {"$in": ids}}},
+                                             {"$group": {"_id": None, "n": {"$sum": "$amount"}}}]).to_list(1)
+    return {"sold": sold, "arrived": arrived, "no_shows": max(0, sold - arrived), "tables": len(tables),
+            "revenue": round(agg[0]["n"], 2) if agg else 0.0, "capacity": ev.get("capacity") or 0,
+            "peak": (peak[0].strftime("%-I %p").lower(), peak[1]) if peak else None}
+
+
+def summary_html(ev: dict, s: dict) -> str:
+    from html import escape
+
+    peak = f"{s['peak'][0]} ({s['peak'][1]} guests)" if s["peak"] else "—"
+    show = f"{round(100 * s['arrived'] / s['sold'])}%" if s["sold"] else "—"
+    cells = [("Guests in", f"{s['arrived']} of {s['sold']}"), ("Show-up rate", show), ("Peak hour", peak),
+             ("Tables booked", str(s["tables"])), ("Your revenue", f"${s['revenue']:,.2f}"), ("No-shows", str(s["no_shows"]))]
+    rows = "".join(f'<tr><td style="padding:6px 16px 6px 0;color:#666">{k}</td><td style="padding:6px 0;font-weight:bold">{escape(v)}</td></tr>'
+                   for k, v in cells)
+    return ('<table role="presentation" width="100%"><tr><td style="padding:24px;font-family:Arial,sans-serif;color:#111">'
+            f'<h2 style="margin:0 0 12px">Last night at {escape(ev["title"])}</h2>'
+            f'<table role="presentation">{rows}</table>'
+            '<p style="font-size:12px;color:#888;margin-top:24px">Revenue is your share, paid out by Nocturne. '
+            "Turn off night summaries under Profile &rarr; Notifications.</p></td></tr></table>")
+
+
+async def send_night_summaries() -> int:
+    from routes.engage import wants  # noqa: E402
+    from routes.features import host_ids  # noqa: E402
+    from routes.notify import background  # noqa: E402
+    from services.emailer import send_email  # noqa: E402
+
+    now = _now()
+    sent = 0
+    async for ev in db.events.find({"date": {"$gte": now - timedelta(hours=36), "$lte": now - SUMMARY_AFTER},
+                                    "summary_sent": {"$ne": True}}, {"_id": 0}):
+        if not (await db.events.update_one({"id": ev["id"], "summary_sent": {"$ne": True}}, {"$set": {"summary_sent": True}})).modified_count:
+            continue
+        s = await night_stats(ev)
+        hosts = [h for h in await host_ids(ev) if h]
+        peak = f" · peak {s['peak'][0]}" if s["peak"] else ""
+        notify(hosts, f"Last night at {ev['title']} 🌙",
+               f"{s['arrived']}/{s['sold']} guests in{peak} · ${s['revenue']:,.2f} to you · {s['tables']} table{'s' if s['tables'] != 1 else ''}",
+               f"/host/event/{ev['id']}", key=f"summary-{ev['id']}", kind="updates")
+        async for u in db.users.find({"id": {"$in": hosts}}, {"_id": 0}):
+            if u.get("email") and wants(u, "summary"):
+                background(send_email(to=u["email"], subject=f"Night summary: {ev['title']} · {s['arrived']} guests",
+                                      html=summary_html(ev, s)))
+        sent += 1
+    return sent

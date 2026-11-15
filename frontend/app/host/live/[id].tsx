@@ -26,7 +26,7 @@ export default function HostLive() {
   return (
     <View style={styles.root}>
       <View style={[styles.header, { paddingTop: insets.top + spacing.md }]}>
-        <Pressable testID="live-back" onPress={() => (router.canGoBack() ? router.back() : router.replace("/host"))} style={styles.iconBtn}>
+        <Pressable testID="live-back" onPress={() => (router.canGoBack() ? router.back() : router.replace(data?.is_staff_view ? "/door" : "/host"))} style={styles.iconBtn}>
           <FeatherIcon name="chevron-left" size={22} color={colors.onSurface} />
         </Pressable>
         <Text style={styles.headerTitle} numberOfLines={1}>{data?.title ?? "Live door"}</Text>

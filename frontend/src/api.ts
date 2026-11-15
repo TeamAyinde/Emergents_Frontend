@@ -213,8 +213,14 @@ export const api = {
   saveEmailPrefs: (p: EmailPrefs) => request<EmailPrefs>("/me/email-prefs", { method: "PUT", body: JSON.stringify(p) }),
   pushPrefs: () => request<PushPrefs>("/me/push-prefs"),
   hostLive: (eid: string) => request<HostLive>(`/host/events/${eid}/live`),
-  sendDeal: (eid: string, pct: number) => request<HostDeal>(`/host/events/${eid}/deal`, { method: "POST", body: JSON.stringify({ pct }) }),
-  myDeal: (eid: string) => request<{ pct: number }>(`/events/${eid}/my-deal`),
+  sendDeal: (eid: string, pct: number, hours: number) =>
+    request<HostDeal>(`/host/events/${eid}/deal`, { method: "POST", body: JSON.stringify({ pct, hours }) }),
+  myDeal: (eid: string) => request<MyDeal>(`/events/${eid}/my-deal`),
+  doorStaff: () => request<DoorStaff[]>("/host/staff"),
+  addDoorStaff: (venue_id: string, email: string) =>
+    request<DoorStaff>("/host/staff", { method: "POST", body: JSON.stringify({ venue_id, email }) }),
+  removeDoorStaff: (id: string) => request<{ ok: boolean }>(`/host/staff/${id}`, { method: "DELETE" }),
+  doorDuty: () => request<DoorDuty>("/staff/duty"),
   savePushPrefs: (p: PushPrefs) => request<PushPrefs>("/me/push-prefs", { method: "PUT", body: JSON.stringify(p) }),
   feedbackInfo: (ticketId: string) =>
     request<{ event_title: string; venue_name: string; event_date: string; submitted: boolean; rating: number | null; points: number; can_rate: boolean }>(
@@ -386,11 +392,17 @@ export type Gift = {
   redeemed: boolean; redeemed_by_name: string | null; email_status?: string | null; created_at: string;
 };
 export type PushPrefs = { event_night: boolean; updates: boolean; concierge: boolean; sales: boolean; door_rush: boolean; table_offers: boolean };
-export type EmailPrefs = { reminders: boolean; receipts: boolean; feedback: boolean; offers: boolean; recap: boolean; newsletter: boolean };
-export type HostDeal = { pct: number; sent_to: number; sent_at: string };
+export type EmailPrefs = { reminders: boolean; receipts: boolean; feedback: boolean; offers: boolean; recap: boolean; summary: boolean; newsletter: boolean };
+export type HostDeal = { pct: number; sent_to: number; sent_at: string; expires_at: string | null; expired: boolean };
+export type MyDeal = { pct: number; qty: number; expires_at: string | null };
+export type DoorStaff = { id: string; venue_id: string; venue_name: string; user_id: string; name: string; email: string; created_at: string };
+export type DoorDuty = {
+  venues: string[];
+  events: { id: string; title: string; date: string; venue_name: string; tickets_sold: number; capacity: number }[];
+};
 export type HostLive = {
   event_id: string; title: string; date: string; capacity: number; tickets_sold: number; checked_in: number; waitlist: number;
-  by_hour: { hour: string; count: number }[]; recent: { name: string; quantity: number; at: string }[]; deal: HostDeal | null;
+  by_hour: { hour: string; count: number }[]; recent: { name: string; quantity: number; at: string }[]; deal: HostDeal | null; is_staff_view: boolean;
 };
 export type HostEarnings = {
   owed: number; paid: number;

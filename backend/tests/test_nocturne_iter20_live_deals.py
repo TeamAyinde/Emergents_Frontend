@@ -217,8 +217,9 @@ class TestDeal:
         assert DB.events.find_one({"id": ev["id"]})["deal"]["pct"] == 30
         live = requests.get(f"{API}/host/events/{ev['id']}/live", headers=h(venue)).json()
         assert live["deal"]["pct"] == 30 and live["deal"]["sent_to"] == 2
-        assert requests.get(f"{API}/events/{ev['id']}/my-deal", headers=h(w1)).json() == {"pct": 30}
-        assert requests.get(f"{API}/events/{ev['id']}/my-deal", headers=h(other)).json() == {"pct": 0}
+        md = requests.get(f"{API}/events/{ev['id']}/my-deal", headers=h(w1)).json()  # iter21: my-deal also returns qty/expires_at
+        assert md["pct"] == 30 and md["qty"] == 1 and md["expires_at"]
+        assert requests.get(f"{API}/events/{ev['id']}/my-deal", headers=h(other)).json() == {"pct": 0, "qty": 0, "expires_at": None}
         assert requests.get(f"{API}/events/{ev['id']}/my-deal").status_code in (401, 403)
 
     def test_deal_push_to_waitlist_respects_updates_pref(self, mods, venue):
