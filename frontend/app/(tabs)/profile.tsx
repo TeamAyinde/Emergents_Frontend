@@ -135,11 +135,11 @@ export default function Profile() {
 
         <Pressable testID="email-prefs-btn" onPress={() => router.push("/email-settings")} style={styles.prefRow}>
           <View style={styles.rowIcon}>
-            <FeatherIcon name="mail" size={16} color={colors.brandPrimary} />
+            <FeatherIcon name="bell" size={16} color={colors.brandPrimary} />
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={styles.rowTitle}>Email preferences</Text>
-            <Text style={styles.rowSub}>Reminders, receipts, offers and newsletter</Text>
+            <Text style={styles.rowTitle}>Notifications</Text>
+            <Text style={styles.rowSub}>Phone alerts and emails you get</Text>
           </View>
           <FeatherIcon name="chevron-right" size={18} color={colors.muted} />
         </Pressable>

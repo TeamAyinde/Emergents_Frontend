@@ -22,7 +22,8 @@
       "package": "com.emergent.mymobileapp.qqzfhs",
       "permissions": [
         "android.permission.CAMERA"
-      ]
+      ],
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "bundler": "metro",

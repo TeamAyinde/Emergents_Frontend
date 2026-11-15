@@ -1,0 +1,39 @@
+{
+  "summary": "Iteration 18 feature set (push prefs, event-night alerts, promoter sale push, notify muting, Notifications screen) tested. Backend: 12/12 new pytest pass (tests/test_nocturne_iter18_push_prefs.py, send_push monkeypatched in-process) + iter17 push regression 9/9 pass. Frontend: Profile > Notifications row opens /email-settings with 'Notifications' header, Phone alerts + Emails sections; sales row hidden for guest, shown for promoter/venue_owner/admin; push and email toggles persist after reload (verified in DB). No deprecated Expo packages detected. Android google-services.json not present yet (as expected).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "routes/push.py send_night_alerts", "issue": "Ticket is flagged night_alert_sent=True before the fire-and-forget push; if the relay fails (5xx/timeout) the alert is never retried (unlike notify.py reminder loop which resets the flag). Acceptable but no retry."},
+      {"endpoint": "routes/push.py send_night_alerts", "issue": "Query on tickets {event_date range, night_alert_sent} every 5 min has no supporting index; consider IndexModel([('event_date',1)]) for scale."},
+      {"endpoint": "server.py issue_ticket (line ~730)", "issue": "user['full_name'].split(' ')[0] runs after the ticket is inserted; a user doc without full_name would raise KeyError -> 500 after the ticket is written. Use user.get('full_name') or 'Someone'."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "email-settings (Notifications)", "issues": ["Switch OFF-state track (colors.surfaceTertiary) is barely visible on the surfaceSecondary row background; only the white thumb shows, so OFF state reads weakly. Consider a lighter off track or border."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_nocturne_iter18_push_prefs.py", "/app/test_reports/pytest/pytest_iter18.xml"],
+  "action_items": [
+    "Optional: guard full_name in promoter sale push message (server.py issue_ticket).",
+    "Optional: add tickets.event_date index and retry-on-failure for night alerts.",
+    "Optional: improve Switch off-state track contrast on Notifications screen.",
+    "Android FCM: add google-services.json when provided by user; real push delivery only verifiable on device builds with a real EMERGENT_PUSH_KEY."
+  ],
+  "critical_code_review_comments": [
+    "notify() mute filter via push_prefs.{kind}: False is correct; defaults (missing key) stay on.",
+    "PUT /me/push-prefs partial update via model_copy(exclude_none) works; invalid types return 422.",
+    "Sales push key sale-{ticket_id}, kind 'sales', action_url /(tabs)/promote; push failure in preview (relay 401) logged as non-blocking warning and purchase/join still succeed.",
+    "Frontend role gating for sales row matches backend roles (promoter/venue_owner/admin)."
+  ],
+  "updated_files": ["/app/backend/tests/test_nocturne_iter18_push_prefs.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "None persisted. TEST_ users/tickets created and deleted by id; promoter wallet_balance restored to saved value (0.0); Velvet Sessions tickets_sold back to 1. Note: guest@nocturne.app already had push_prefs set to all-true before this run (not changed by this agent).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run new file serially: cd /app/backend/tests && python -m pytest test_nocturne_iter18_push_prefs.py -n 0. It imports server/routes.push in-process and monkeypatches send_push; inserts TEST_ tickets directly in DB for night alert window tests. UI tests used freshly registered TEST_ guest/promoter users (sign-in via signin-email/signin-password/signin-submit).",
+  "rca_of_issue": ""
+}

@@ -211,6 +211,8 @@ export const api = {
     request<{ code: string; invited: number; rewarded: number; points_earned: number; referrer_points: number; friend_points: number }>("/me/invites"),
   emailPrefs: () => request<EmailPrefs>("/me/email-prefs"),
   saveEmailPrefs: (p: EmailPrefs) => request<EmailPrefs>("/me/email-prefs", { method: "PUT", body: JSON.stringify(p) }),
+  pushPrefs: () => request<PushPrefs>("/me/push-prefs"),
+  savePushPrefs: (p: PushPrefs) => request<PushPrefs>("/me/push-prefs", { method: "PUT", body: JSON.stringify(p) }),
   feedbackInfo: (ticketId: string) =>
     request<{ event_title: string; venue_name: string; event_date: string; submitted: boolean; rating: number | null; points: number; can_rate: boolean }>(
       `/feedback/${ticketId}`,
@@ -380,6 +382,7 @@ export type Gift = {
   id: string; code: string; level: string; days: number; recipient_email: string | null; note: string | null;
   redeemed: boolean; redeemed_by_name: string | null; email_status?: string | null; created_at: string;
 };
+export type PushPrefs = { event_night: boolean; updates: boolean; concierge: boolean; sales: boolean };
 export type EmailPrefs = { reminders: boolean; receipts: boolean; feedback: boolean; offers: boolean; newsletter: boolean };
 export type HostEarnings = {
   owed: number; paid: number;

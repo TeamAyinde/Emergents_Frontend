@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "88454755441",
+    "project_id": "nocturne-276ce",
+    "storage_bucket": "nocturne-276ce.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:88454755441:android:0d198a2d52139651b157d0",
+        "android_client_info": {
+          "package_name": "com.emergent.mymobileapp.qqzfhs"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCVdYT51JjS8XXf86l-wpG-Zpntcoh9OmY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

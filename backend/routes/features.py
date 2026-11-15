@@ -117,7 +117,7 @@ async def reply(member_id: str, body: MessageIn, admin: AdminDep):
     if not member:
         raise HTTPException(404, "Member not found")
     msg = await _post(member, "concierge", f"{admin['full_name'].split()[0]} · Concierge", body.text)
-    push([member_id], "Your concierge replied", body.text.strip()[:140], "/concierge", key=f"msg-{msg.id}")
+    push([member_id], "Your concierge replied", body.text.strip()[:140], "/concierge", key=f"msg-{msg.id}", kind="concierge")
     return msg
 
 

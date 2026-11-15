@@ -64,6 +64,7 @@ INDEXES: dict[str, list[IndexModel]] = {
         IndexModel([("user_id", ASCENDING)], name="user"),
         IndexModel([("event_id", ASCENDING)], name="event"),
         IndexModel([("promoter_id", ASCENDING)], name="promoter"),
+        IndexModel([("event_date", ASCENDING)], name="event_date"),
     ],
     "reservations": [
         IndexModel([("id", ASCENDING)], name="id", unique=True),
@@ -722,6 +723,13 @@ async def issue_ticket(
         await db.users.update_one(
             {"id": promoter_id}, {"$inc": {"wallet_balance": promoter_earning}}
         )
+    if promoter_id:
+        from routes.push import notify as push  # noqa: E402
+
+        earned = f" · +${promoter_earning:,.2f} to your wallet" if promoter_earning > 0 else ""
+        push([promoter_id], "New sale through your link 🎉",
+             f"{(user.get('full_name') or 'A guest').split(' ')[0]} got {qty} ticket{'s' if qty > 1 else ''} for {event['title']}{earned}",
+             "/(tabs)/promote", key=f"sale-{doc['id']}", kind="sales")
     doc.pop("_id", None)
     return TicketOut(**doc)
 
@@ -967,6 +975,9 @@ async def _startup():
     from routes.engage import feedback_loop  # local
 
     app.state.feedback_task = asyncio.create_task(feedback_loop())
+    from routes.push import night_alert_loop  # local
+
+    app.state.night_task = asyncio.create_task(night_alert_loop())
 
 
 @app.on_event("shutdown")
