@@ -30,7 +30,7 @@ export function TableUpsell({ ticket }: { ticket: Ticket }) {
   const from = Math.min(...open.map((t) => t.min_spend));
 
   return (
-    <Pressable testID="table-upsell" onPress={() => router.push(`/event/${ticket.event_id}`)} style={styles.card}>
+    <Pressable testID="table-upsell" onPress={() => router.push(`/event/${ticket.event_id}?tables=1`)} style={styles.card}>
       <View style={styles.icon}>
         <FeatherIcon name="star" size={18} color={colors.brandPrimary} />
       </View>

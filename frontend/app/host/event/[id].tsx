@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import FeatherIcon from "@react-native-vector-icons/feather";
 
 import { api, EventRequest } from "@/src/api";
+import { DealCard } from "@/src/deal-card";
 import { colors, radius, spacing } from "@/src/theme";
 
 export default function HostEvent() {
@@ -31,6 +32,9 @@ export default function HostEvent() {
           <FeatherIcon name="chevron-left" size={22} color={colors.onSurface} />
         </Pressable>
         <Text style={styles.title} numberOfLines={1}>{ev?.title ?? "Event"}</Text>
+        <Pressable testID="host-live-btn" onPress={() => router.push(`/host/live/${id}`)} style={styles.iconBtn}>
+          <FeatherIcon name="activity" size={18} color={colors.brandPrimary} />
+        </Pressable>
         <Pressable testID="host-scan-btn" onPress={() => router.push("/checkin")} style={styles.iconBtn}>
           <FeatherIcon name="maximize" size={18} color={colors.brandPrimary} />
         </Pressable>
@@ -39,6 +43,9 @@ export default function HostEvent() {
         <ActivityIndicator color={colors.brandPrimary} style={{ marginTop: spacing["2xl"] }} />
       ) : (
         <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: insets.bottom + spacing.xl, gap: spacing.lg }}>
+          {ev ? (
+            <DealCard eventId={id!} spotsLeft={(ev.capacity ?? 200) - ev.tickets_sold} upcoming={new Date(ev.date) > new Date()} />
+          ) : null}
           <Section title={`Requests & waitlist (${pending.length})`}>
             {pending.length === 0 ? <Text style={styles.muted}>Nobody waiting.</Text> : null}
             {pending.map((r) => (

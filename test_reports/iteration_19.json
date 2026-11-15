@@ -1,0 +1,39 @@
+{
+  "summary": "Iteration 20 features (Host Live dashboard, Last-Minute Deals, deal pricing, Tables From Alert, Recap Email, recap email pref). Backend: 11/11 new tests pass (tests/test_nocturne_iter20_live_deals.py), and the iter19 alerts + iter18 regression suites pass too (22/22 in the combined iter19+20 run). Frontend (375x667): DealCard, deal-10/20/30/50 -> deal-sent, host-live-btn -> /host/live with live-count/live-capacity/arrivals-chart/latest arrivals, guest deal-banner plus 'Last-minute deal (20%) -$10.00' row (total $46.00 matches the server), ?tables=1 auto-scroll to tables-section, table-upsell -> ?tables=1, and pref-recap shown only to promoters (toggle saves) all work. One HIGH UX/integration bug: a waitlisted guest who gets a deal has no buy button on the event screen, so the deal can't be used from the UI.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/events, GET /api/events/{id}", "issue": "One event doc with venue_id=null makes EventOut validation fail, so the whole /api/events?upcoming=true list returns 500 for every user. The trigger was test-inserted data, but one bad doc should not take down the list. The iter19 test seeding used venue_id None, so every pytest run briefly caused 500s (test file fixed)."},
+      {"endpoint": "POST /api/host/events/{eid}/deal / ticket_price", "issue": "The deal is not tied to the waitlisted quantity. A deal guest can check out up to 1+plus_one_limit tickets at the discounted price even if their waitlist request was for 1."},
+      {"endpoint": "GET /api/host/events/{eid}/live vs POST deal", "issue": "Capacity defaults don't match: live uses 200, deal/join use 10**6, and the frontend DealCard uses 200."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "app/event/[id].tsx sticky CTA", "issue": "When the guest has a pending waitlist request, `outcome` is set ('You're on the waitlist...') and `outcome ? null : <buy-ticket-btn>` hides the buy button. This happens even when spots are open and a deal is active. Deal guests are waitlisted by definition, so after the deal push ('Tap to grab it') they see the deal-banner and the discounted total but cannot buy. Reproduced: 6 spots left, deal 20%, buy-ticket-btn count = 0. The backend /events/{id}/join and checkout handle this case correctly. The same problem affects the earlier 'waitlist spot opened' push. Reference: app/event/[id].tsx:92-96, 233", "testID": "buy-ticket-btn", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "email-settings", "issues": ["Switch elements (e.g. pref-recap) are 40x20. That's fine if the whole pref-row is tappable; otherwise it's under the 44pt touch target."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_nocturne_iter20_live_deals.py", "/app/backend/tests/iter20_ui_seed.py", "/app/test_reports/pytest/pytest_iter20.xml"],
+  "action_items": [
+    "HIGH: In app/event/[id].tsx, show buy-ticket-btn for a pending *waitlist* request when spots are open (left >= qty), or at least when dealPct > 0. Label it e.g. 'Grab it · Pay $X', and only show the waitlist outcome text when the event is still sold out.",
+    "Make EventOut tolerate venue_id null (Optional) or skip invalid docs, so one bad event can't 500 the whole events list.",
+    "Optional: limit the deal discount to the waitlisted quantity; use the same capacity default everywhere."
+  ],
+  "critical_code_review_comments": [
+    "hostlive.live: by_hour buckets are UTC hours ($dateTrunc). In half-hour-offset timezones, labels shown in local time will be misaligned. Fine for the US.",
+    "send_deal snapshots user_ids at send time, so guests who join the waitlist afterwards don't get the deal. That's acceptable, but document it.",
+    "recap emails go through routes.notify.background with a 0.6s sleep per promoter. Seed/test addresses (@nocturne.app, test_) are skipped by emailer._is_test_address, so tests send no real mail. The recap HTML passes _assert_safe_email."
+  ],
+  "updated_files": ["/app/backend/tests/test_nocturne_iter20_live_deals.py (new)", "/app/backend/tests/iter20_ui_seed.py (new)", "/app/backend/tests/test_nocturne_iter19_alerts.py (mk_event venue_id None -> 'TEST_venue' so /api/events doesn't 500 during runs)"],
+  "success_rate": {"backend": "100%", "frontend": "90% (1 HIGH CTA bug)"},
+  "seed_data_creation": "TEST_ users, events, tickets and requests created via pytest and iter20_ui_seed.py (seed|clean). All removed by id. No deals left on events, the seeded promoter's wallet/credit is unchanged (0/0), and the promoter_recap settings doc was restored.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: cd /app/backend && python -m pytest tests/test_nocturne_iter19_alerts.py tests/test_nocturne_iter20_live_deals.py -n 0. For UI: python tests/iter20_ui_seed.py seed, inject the token via localStorage 'nocturne_token' (tokens in /tmp/iter20_ui_seed.json), then python tests/iter20_ui_seed.py clean. Seeded events must have a string venue_id or /api/events 500s.",
+  "rca_of_issue": "Deal CTA: event/[id].tsx computes outcome from pendingReq.kind==='waitlist' regardless of open spots, and the sticky footer renders `outcome ? null : buy button`. Fix: only treat a waitlist request as blocking while soldOut is true."
+}

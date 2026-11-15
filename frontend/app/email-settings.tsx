@@ -24,6 +24,7 @@ const ROWS: Row<keyof EmailPrefs>[] = [
   { key: "receipts", title: "Renewal receipts", sub: "Each time Silver or Gold renews" },
   { key: "feedback", title: "Rate your night", sub: "The morning after, earn bonus points" },
   { key: "offers", title: "Member offers", sub: "Exclusive discounts and perks" },
+  { key: "recap", title: "Weekly recap", sub: "Monday summary with your earnings chart" },
   { key: "newsletter", title: "Newsletter", sub: "Lifestyle stories and new venues" },
 ];
 
@@ -90,7 +91,7 @@ export default function EmailSettings() {
           {savePush.error ? <Text style={styles.err}>{savePush.error.message}</Text> : null}
           <Text style={styles.hintSmall}>Phone alerts need notifications allowed for the app in your phone settings.</Text>
           <Text style={[styles.section, { marginTop: spacing.lg }]}>Emails</Text>
-          {ROWS.map((r) => (
+          {ROWS.filter((r) => r.key !== "recap" || user?.role === "promoter").map((r) => (
             <PrefRow key={r.key} id={r.key} title={r.title} sub={r.sub} value={data[r.key]}
               onChange={(v) => save.mutate({ ...data, [r.key]: v })} />
           ))}

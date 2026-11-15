@@ -87,14 +87,14 @@ def test_prefs_get_shape(guest):
     r = requests.get(f"{API}/me/email-prefs", headers=h(guest[0]))
     assert r.status_code == 200
     d = r.json()
-    assert set(d) == {"reminders", "receipts", "feedback", "offers", "newsletter"}
+    assert set(d) == {"reminders", "receipts", "feedback", "offers", "recap", "newsletter"}
     assert all(isinstance(v, bool) for v in d.values())
     assert d["newsletter"] == bool(guest[1].get("marketing_opt_in"))
 
 
 def test_prefs_put_persists_and_newsletter_maps(guest):
     tok = guest[0]
-    body = {"reminders": False, "receipts": True, "feedback": False, "offers": True, "newsletter": False}
+    body = {"reminders": False, "receipts": True, "feedback": False, "offers": True, "recap": True, "newsletter": False}
     r = requests.put(f"{API}/me/email-prefs", json=body, headers=h(tok))
     assert r.status_code == 200 and r.json() == body
     assert requests.get(f"{API}/me/email-prefs", headers=h(tok)).json() == body

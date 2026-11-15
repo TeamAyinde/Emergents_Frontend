@@ -56,7 +56,7 @@ async def door_rush(event_id: str, qty: int, total: int) -> None:
         title, msg, mark = f"{total} guests in", f"{ev['title']} is filling up{pct}.", str(total // DOOR_STEP)
     else:
         return
-    notify(host_ids(ev), title, msg, f"/host/event/{event_id}", key=f"door-{event_id}-{mark}", kind="door_rush")
+    notify(host_ids(ev), title, msg, f"/host/live/{event_id}", key=f"door-{event_id}-{mark}", kind="door_rush")
 
 
 # ---------- Waitlist: a spot opened ----------
@@ -105,7 +105,7 @@ async def send_table_offers() -> int:
         low = min(x["min_spend"] for x in open_)
         notify([t["user_id"]], "VIP tables still open tonight 🥂",
                f"Upgrade your night at {ev.get('venue_name') or ev['title']} — {len(open_)} table{'s' if len(open_) > 1 else ''} left from ${low:,.0f}.",
-               f"/event/{t['event_id']}", key=f"upsell-{t['id']}", kind="table_offers")
+               f"/event/{t['event_id']}?tables=1", key=f"upsell-{t['id']}", kind="table_offers")
         sent += 1
     return sent
 
@@ -131,8 +131,10 @@ async def send_promoter_recap(force: bool = False) -> int:
     ]).to_list(None)
     week_stats = {r["_id"]: r for r in rows}
     ranks = {e.user_id: i + 1 for i, e in enumerate(await _rank(now.strftime("%Y-%m"), 200))}
+    days = await _daily_earnings(since)
     sent = 0
-    async for p in db.users.find({"role": "promoter"}, {"_id": 0, "id": 1}):
+    emails = []
+    async for p in db.users.find({"role": "promoter"}, {"_id": 0, "id": 1, "email": 1, "full_name": 1, "email_prefs": 1}):
         s = week_stats.get(p["id"])
         rank = f" · #{ranks[p['id']]} this month" if p["id"] in ranks else ""
         if s and s["guests"]:
@@ -140,8 +142,68 @@ async def send_promoter_recap(force: bool = False) -> int:
         else:
             msg = f"Quiet week{rank}. Share your link tonight to climb the leaderboard."
         notify([p["id"]], "Your weekly recap 📈", msg, "/(tabs)/promote", key=f"recap-{week}-{p['id']}", kind="sales")
+        if p.get("email") and (p.get("email_prefs") or {}).get("recap", True):
+            emails.append((p, s or {"guests": 0, "earnings": 0.0}, ranks.get(p["id"]), days.get(p["id"], {})))
         sent += 1
+    if emails:
+        from routes.notify import background  # noqa: E402
+
+        background(_recap_emails(emails, since))
     return sent
+
+
+async def _daily_earnings(since: datetime) -> dict:
+    """{promoter_id: {YYYY-MM-DD: (guests, earnings)}} for the last 7 days (UTC)."""
+    rows = await db.tickets.aggregate([
+        {"$match": {"promoter_id": {"$ne": None}, "created_at": {"$gte": since}}},
+        {"$group": {"_id": {"p": "$promoter_id", "d": {"$dateToString": {"format": "%Y-%m-%d", "date": "$created_at"}}},
+                    "g": {"$sum": "$quantity"}, "e": {"$sum": "$promoter_earning"}}},
+    ]).to_list(None)
+    out: dict = {}
+    for r in rows:
+        out.setdefault(r["_id"]["p"], {})[r["_id"]["d"]] = (r["g"], r["e"])
+    return out
+
+
+def recap_html(name: str, stats: dict, rank, days: dict, since: datetime) -> str:
+    from html import escape
+
+    from services.emailer import EMAIL_FROM_NAME
+
+    labels = [(since + timedelta(days=i + 1)) for i in range(7)]
+    vals = [days.get(d.strftime("%Y-%m-%d"), (0, 0.0)) for d in labels]
+    top = max([v[1] for v in vals] + [0.01])
+    bars = "".join(
+        f'<td valign="bottom" align="center" style="padding:0 4px;font-size:11px;color:#666">'
+        f'<div style="font-size:10px;color:#111">{"$" + format(e, ",.0f") if e else ""}</div>'
+        f'<div style="width:28px;height:{max(2, round(110 * e / top))}px;background:{"#d4af37" if e else "#e5e5e5"};border-radius:4px 4px 0 0"></div>'
+        f'{d.strftime("%a")}</td>' for d, (_, e) in zip(labels, vals))
+    rank_line = f"<p>You're <strong>#{rank}</strong> on this month's leaderboard.</p>" if rank else ""
+    nudge = ("<p>Keep the momentum — share your link before the weekend.</p>" if stats["guests"]
+             else "<p>Quiet week. Share your link tonight to start climbing the leaderboard.</p>")
+    brand = escape(EMAIL_FROM_NAME)
+    return (
+        '<table role="presentation" width="100%"><tr><td style="padding:24px;font-family:Arial,sans-serif;color:#111">'
+        f'<h2 style="margin:0 0 12px">Your weekly recap</h2><p>Hi {escape(name.split(" ")[0])}, here is your last 7 days.</p>'
+        f'<table role="presentation" style="margin:8px 0 16px"><tr>'
+        f'<td style="padding-right:24px"><div style="font-size:12px;color:#666">Guests</div><div style="font-size:24px;font-weight:bold">{stats["guests"]}</div></td>'
+        f'<td><div style="font-size:12px;color:#666">Earned</div><div style="font-size:24px;font-weight:bold">${stats["earnings"]:,.2f}</div></td>'
+        f'</tr></table><table role="presentation" style="border-bottom:1px solid #ddd"><tr>{bars}</tr></table>'
+        f'{rank_line}{nudge}<p style="font-size:12px;color:#888;margin-top:24px">Sent by {brand}. Turn off the weekly recap under '
+        "Profile &rarr; Notifications.</p></td></tr></table>"
+    )
+
+
+async def _recap_emails(items: list, since: datetime) -> None:
+    from services.emailer import send_email  # noqa: E402
+
+    for p, stats, rank, days in items:
+        try:
+            await send_email(to=p["email"], subject=f"Your week: {stats['guests']} guests · ${stats['earnings']:,.2f} earned",
+                             html=recap_html(p.get("full_name") or "there", stats, rank, days, since))
+        except Exception:
+            log.exception("recap email failed for %s", p["id"])
+        await asyncio.sleep(0.6)  # stay under the email provider's rate limit
 
 
 async def alerts_loop() -> None:

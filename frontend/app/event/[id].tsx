@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -25,7 +25,7 @@ import { startCheckout } from "@/src/payments";
 import { SpotlightCard } from "@/src/spotlight-card";
 
 export default function EventDetails() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, tables } = useLocalSearchParams<{ id: string; tables?: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const qc = useQueryClient();
@@ -33,8 +33,11 @@ export default function EventDetails() {
   const [code, setCode] = useState("");
   const { user, refresh } = useAuth();
   const lvl = (user?.level ?? "bronze") as Level;
+  const scrollRef = useRef<ScrollView>(null);
+  const scrolled = useRef(false);
 
   const { data: ev, isLoading } = useQuery({ queryKey: ["event", id], queryFn: () => api.getEvent(id!) });
+  const { data: deal } = useQuery({ queryKey: ["my-deal", id], queryFn: () => api.myDeal(id!), enabled: !!user });
   const { data: guests } = useQuery({ queryKey: ["guests", id], queryFn: () => api.eventGuests(id!) });
   const { data: myReqs } = useQuery({ queryKey: ["mine-requests"], queryFn: () => api.myRequests() });
   const { data: myTickets } = useQuery({ queryKey: ["mine-tickets"], queryFn: () => api.myTickets() });
@@ -70,7 +73,9 @@ export default function EventDetails() {
 
   const gross = ev.price * qty;
   const discount = gross * LEVEL_INFO[lvl].discount;
-  const base = gross - discount;
+  const dealPct = deal?.pct ?? 0;
+  const dealOff = (gross - discount) * (dealPct / 100);
+  const base = gross - discount - dealOff;
   const fee = base * 0.15;
   const locked = !canAccess(lvl, ev.min_level);
   const total = base + fee;
@@ -86,13 +91,13 @@ export default function EventDetails() {
     : ev.approval_required ? "Request to join" : soldOut ? "Join waitlist" : payLabel;
   const outcome = buy.data?.result === "pending" || (pendingReq && pendingReq.kind === "approval")
     ? "Request sent. The host will approve you soon — your ticket appears in Profile."
-    : buy.data?.result === "waitlisted" || (pendingReq && pendingReq.kind === "waitlist")
+    : buy.data?.result === "waitlisted" || (pendingReq && pendingReq.kind === "waitlist" && soldOut)
       ? "You're on the waitlist. If a spot opens, the host will add you."
       : "";
 
   return (
     <View style={styles.root}>
-      <ScrollView contentContainerStyle={{ paddingBottom: 280 }}>
+      <ScrollView ref={scrollRef} contentContainerStyle={{ paddingBottom: 280 }}>
         <View style={styles.hero}>
           <Image source={ev.image_url} style={StyleSheet.absoluteFill} contentFit="cover" />
           <LinearGradient
@@ -129,6 +134,13 @@ export default function EventDetails() {
             {ev.approval_required ? <InfoChip icon="shield" label="Host approval" /> : null}
           </View>
 
+          {dealPct > 0 && !myTicket ? (
+            <View style={styles.deal} testID="deal-banner">
+              <FeatherIcon name="zap" size={16} color={colors.onBrandPrimary} />
+              <Text style={styles.dealText}>Last-minute deal: {dealPct}% off, just for you</Text>
+            </View>
+          ) : null}
+
           <Text style={styles.sectionTitle}>About</Text>
           <Text style={styles.description}>{ev.description}</Text>
 
@@ -149,7 +161,20 @@ export default function EventDetails() {
             </View>
           ) : null}
 
-          {ev.has_tables && !locked ? <TableMap eventId={ev.id} userLevel={lvl} /> : null}
+          {ev.has_tables && !locked ? (
+            <View
+              testID="tables-section"
+              onLayout={(e) => {
+                if (tables && !scrolled.current) {
+                  scrolled.current = true;
+                  const y = e.nativeEvent.layout.y + HERO_H;
+                  setTimeout(() => scrollRef.current?.scrollTo({ y: Math.max(0, y - spacing.lg), animated: true }), 300);
+                }
+              }}
+            >
+              <TableMap eventId={ev.id} userLevel={lvl} />
+            </View>
+          ) : null}
           {(user?.role === "promoter" || user?.role === "admin") && new Date(ev.date) > new Date() ? <SpotlightCard eventId={ev.id} active={ev.spotlight} /> : null}
 
           <Text style={styles.sectionTitle}>{ev.plus_one_limit > 0 ? `Tickets (you + up to ${maxQty - 1})` : "Tickets (just you)"}</Text>
@@ -177,6 +202,7 @@ export default function EventDetails() {
           <View style={styles.breakdown}>
             <Row label="Tickets" value={`$${gross.toFixed(2)}`} />
             {discount > 0 ? <Row label={`${LEVEL_INFO[lvl].label} discount`} value={`−$${discount.toFixed(2)}`} /> : null}
+            {dealOff > 0 ? <Row label={`Last-minute deal (${dealPct}%)`} value={`−$${dealOff.toFixed(2)}`} /> : null}
             <Row label="Platform fee (15%)" value={`$${fee.toFixed(2)}`} />
             {credit > 0 ? <Row label="Reward credit" value={`−$${credit.toFixed(2)}`} /> : null}
             <View style={styles.sep} />
@@ -234,7 +260,14 @@ function Row({ label, value, bold }: { label: string; value: string; bold?: bool
   );
 }
 
+const HERO_H = 420;
+
 const styles = StyleSheet.create({
+  deal: {
+    flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: colors.brandPrimary,
+    paddingHorizontal: spacing.md, paddingVertical: spacing.md, borderRadius: radius.md,
+  },
+  dealText: { color: colors.onBrandPrimary, fontSize: 14, fontWeight: "800", flex: 1 },
   guests: { flexDirection: "row", alignItems: "center", gap: spacing.md },
   avatars: { flexDirection: "row" },
   avatar: {
@@ -247,7 +280,7 @@ const styles = StyleSheet.create({
   secureHint: { color: colors.muted, fontSize: 11 },
   root: { flex: 1, backgroundColor: colors.surface },
   center: { alignItems: "center", justifyContent: "center" },
-  hero: { height: 420 },
+  hero: { height: HERO_H },
   back: {
     position: "absolute", left: spacing.lg, width: 40, height: 40, borderRadius: 20,
     backgroundColor: "rgba(9,9,11,0.5)", alignItems: "center", justifyContent: "center",

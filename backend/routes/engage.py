@@ -19,7 +19,7 @@ router = APIRouter(prefix="/api")
 log = logging.getLogger("engage")
 UserDep = Annotated[dict, Depends(current_user)]
 BRAND = escape(EMAIL_FROM_NAME)
-PREF_KEYS = ("reminders", "receipts", "feedback", "offers")  # newsletter = marketing_opt_in
+PREF_KEYS = ("reminders", "receipts", "feedback", "offers", "recap")  # newsletter = marketing_opt_in
 FEEDBACK_POINTS = 50
 WINBACK_PCT = 30
 FEEDBACK_EVERY_S = 1800
@@ -45,6 +45,7 @@ class EmailPrefs(BaseModel):
     receipts: bool = True
     feedback: bool = True
     offers: bool = True
+    recap: bool = True  # promoters: Monday recap email
     newsletter: bool = False
 
 
@@ -53,6 +54,7 @@ class EmailPrefsIn(BaseModel):
     receipts: Optional[bool] = None
     feedback: Optional[bool] = None
     offers: Optional[bool] = None
+    recap: Optional[bool] = None
     newsletter: Optional[bool] = None
 
 

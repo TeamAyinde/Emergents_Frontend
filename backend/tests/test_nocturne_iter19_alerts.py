@@ -40,7 +40,7 @@ def h(u):
 
 
 def mk_event(**kw):
-    doc = {"id": str(uuid.uuid4()), "title": f"TEST_ Alerts {uuid.uuid4().hex[:4]}", "venue_id": None,
+    doc = {"id": str(uuid.uuid4()), "title": f"TEST_ Alerts {uuid.uuid4().hex[:4]}", "venue_id": "TEST_venue",
            "venue_name": "TEST_ Venue", "city": "Los Angeles", "date": NOW() + timedelta(hours=5), "price": 0,
            "tags": [], "tickets_sold": 0, "created_at": NOW(), "min_level": "bronze", "approval_required": False,
            "capacity": 100, "plus_one_limit": 7, "tables": [], "created_by": None, "image_url": ""}
@@ -170,7 +170,7 @@ class TestDoorRush:
         assert keys() == [f"door-{ev['id']}-first"], SENT
         assert SENT[0]["recipients"] == [hid]
         assert "1%" in SENT[0]["data"]["message"]
-        assert SENT[0]["data"]["action_url"] == f"/host/event/{ev['id']}"
+        assert SENT[0]["data"]["action_url"] == f"/host/live/{ev['id']}"
         # 2 -> 20 : no milestone
         mk_ticket(ev, g, qty=18, checked_in=True)
         SENT.clear()
@@ -266,7 +266,7 @@ class TestTableOffers:
         for t in (t_booked, t_soon, t_gold, t_none):
             assert f"upsell-{t['id']}" not in ks
         s = next(x for x in SENT if x["key"] == f"upsell-{t_ok['id']}")
-        assert s["data"]["action_url"] == f"/event/{ev['id']}"
+        assert s["data"]["action_url"] == f"/event/{ev['id']}?tables=1"
         assert "1 table left from $300" in s["data"]["message"], s["data"]["message"]
         assert DB.tickets.find_one({"id": t_ok["id"]})["table_offer_sent"] is True
         SENT.clear()

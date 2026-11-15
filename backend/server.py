@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, ValidationError
 from pymongo import ASCENDING, DESCENDING, IndexModel
 from starlette.middleware.cors import CORSMiddleware
 
@@ -566,8 +566,13 @@ async def list_events(city: Optional[str] = None, upcoming: bool = True):
         filt["date"] = {"$gte": datetime.now(timezone.utc)}
     cursor = db.events.find(filt, {"_id": 0}).sort("date", ASCENDING)
     boosted = await featured_venue_ids()
-    events = [EventOut(**{**e, "featured": e.get("venue_id") in boosted,
-                          "spotlight": _is_featured({"featured_until": e.get("spotlight_until")})}) async for e in cursor]
+    events = []
+    async for e in cursor:
+        try:
+            events.append(EventOut(**{**e, "featured": e.get("venue_id") in boosted,
+                                      "spotlight": _is_featured({"featured_until": e.get("spotlight_until")})}))
+        except ValidationError:
+            logging.getLogger(__name__).warning("skipping malformed event %s", e.get("id"))  # one bad record never breaks the feed
     # promoter spotlights first, then boosted venues' events, then by date
     return sorted(events, key=lambda e: (not e.spotlight, not e.featured))
 
@@ -653,8 +658,10 @@ async def purchase_ticket(
 
 
 def ticket_price(event: dict, user: dict, qty: int) -> tuple[float, float, float]:
-    """(base after member discount, platform fee, total) for `qty` tickets."""
-    base = round(event["price"] * qty * (1 - LEVEL_TICKET_DISCOUNT[user_level(user)]), 2)
+    """(base after member discount and any last-minute deal for this guest, platform fee, total) for `qty` tickets."""
+    deal = event.get("deal") or {}
+    deal_pct = deal.get("pct", 0) if user.get("id") in deal.get("user_ids", []) else 0
+    base = round(event["price"] * qty * (1 - LEVEL_TICKET_DISCOUNT[user_level(user)]) * (1 - deal_pct / 100), 2)
     fee = round(base * PLATFORM_FEE_PCT, 2)
     return base, fee, round(base + fee, 2)
 
@@ -942,6 +949,7 @@ from routes.growth import router as growth_router  # noqa: E402
 from routes.notify import router as notify_router  # noqa: E402
 from routes.engage import router as engage_router  # noqa: E402
 from routes.push import router as push_router  # noqa: E402
+from routes.hostlive import router as hostlive_router  # noqa: E402
 
 app.include_router(api)
 app.include_router(extras_router)
@@ -953,6 +961,7 @@ app.include_router(growth_router)
 app.include_router(notify_router)
 app.include_router(engage_router)
 app.include_router(push_router)
+app.include_router(hostlive_router)
 
 app.add_middleware(
     CORSMiddleware,
