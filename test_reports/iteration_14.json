@@ -1,0 +1,45 @@
+{
+  "summary": "Tested email preferences, post-event feedback and win-back. Backend: a new suite with 11 tests passed, and the full regression run (all suites, one at a time with -n 0) passed 207/207. GET/PUT /api/me/email-prefs works, newsletter maps to marketing_opt_in, and 401 is returned without auth. Feedback API: 200 with +50 points once, 409 on repeat with no extra points, 400 before the event, 404 for another user's ticket, 422 for bad rating or a comment over 500 chars, 401 without auth. Checked in-process with send_email replaced by a recorder: send_feedback_requests sends once per ticket, skips users with feedback off (still claims the ticket), ignores tickets outside the 8-36h window, does nothing when public_origin is missing, and the link is {origin}/feedback/{id}. send_due_reminders skips users with reminders off. renewal_receipt skips users with receipts off. on_renewal_cancelled sends once (an atomic guard also stops a stale user doc) and respects offers off. apply_winback guards work. UI: the Profile 'Email preferences' row opens /email-settings, and switches toggle and keep their state after a reload. The /feedback/{id} flow works: rate 5, add a comment, 'Thank you! 50 bonus points added.', rewards went from 950 to 1,000, and a revisit shows 'already rated'. Main gap: opening the feedback email link while signed out loses the destination; after sign-in the user lands on Home.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/feedback/{ticket_id}", "issue": "Does not say whether the event has happened. For a future ticket the UI shows stars and the submit button, then fails with 400 after submit. Add 'can_rate'/'event_passed' to the response."},
+      {"endpoint": "PUT /api/me/email-prefs", "issue": "A partial body resets the keys you leave out to their defaults (e.g. {offers:false} also sets newsletter=false and unsubscribes). Today's UI always sends the full object, but a PATCH-like merge would be safer."},
+      {"endpoint": "engage.on_renewal_cancelled", "issue": "When offers is off it returns before setting winback_offered. A member who later turns offers on and cancels again will get the offer. This is probably fine, but it is a policy choice."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "feedback/[id] error state", "issue": "For an unknown ticket or a 404, a spinner shows for about 10s before 'Ticket not found' (react-query retries 3 times by default). Set retry:false or skip retries on 4xx for this query.", "testID": "feedback-error", "priority": "low"}
+    ],
+    "integration_issues": [
+      {"flow": "Feedback email link opened while signed out", "issue": "/feedback/{id} redirects to /welcome. After sign-in, AuthGate (app/_layout.tsx:30-34) calls router.replace('/(tabs)'), so the feedback screen is lost. Most people open emails in a browser where they are signed out, so this hurts the main feedback conversion path. Save the intended path before redirecting to welcome and replace back to it after login.", "affected_testIDs": ["signin-submit", "feedback-submit"]}
+    ],
+    "design_issues": [
+      {"screen": "email-settings", "issues": ["On web the Switch thumb shows RN-web's default teal (#009688) when on, because thumbColor is overridden by activeThumbColor on web. It is off-brand next to the gold track; set activeThumbColor too.", "In the off state the track (colors.border) has very low contrast on the dark surface.", "The Switch hit area is 40x20 and the row is not pressable. Make the whole row a Pressable that toggles, to meet the 44pt target."]},
+      {"screen": "feedback/[id]", "issues": ["Selected stars only change the outline colour (Feather 'star' has no fill), so it is hard to tell 3 stars from 5. Consider a filled star icon or a fill for selected stars."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_nocturne_iter15.py", "/app/test_reports/pytest/pytest_iter15.xml"],
+  "action_items": [
+    "Keep the deep-link destination through sign-in in AuthGate (app/_layout.tsx) so /feedback/{id} from the email opens after login.",
+    "Add a can_rate/event_passed flag to GET /api/feedback/{id} and show a 'come back after the night' state for future events.",
+    "Set retry:false (or no retries on 4xx) for the feedback info query.",
+    "Email settings switches: set activeThumbColor (web), raise off-track contrast, make the full row tappable.",
+    "Clean up your leftover TEST_ ticket 'TEST_eca2312740fa46a09e623e5ea1be0e4e' ('Past Night', owned by guest) and its feedback doc. It was created before this run and I left it alone."
+  ],
+  "critical_code_review_comments": [
+    "send_feedback_requests, send_due_reminders and on_renewal_cancelled use atomic claim flags correctly, and reset the flag when a send fails.",
+    "submit_feedback uses _id=ticket_id for idempotency, but a bare 'except Exception' maps any insert error (not just DuplicateKeyError) to 409. Catch DuplicateKeyError.",
+    "Points $inc and the ledger insert run after the feedback insert without a transaction. A crash between them leaves feedback with no points (rare).",
+    "The win-back email says 'tap Keep my plan', but apply_winback only runs on /membership/subscription/resume when OWN_KEY is set. This matches the spec; it was not tested with real Stripe (no own key)."
+  ],
+  "updated_files": ["/app/backend/tests/test_nocturne_iter15.py"],
+  "success_rate": {"backend": "100% (207/207 regression incl. 11 new)", "frontend": "90% (prefs and feedback flows pass; signed-out deep link loses destination)"},
+  "seed_data_creation": "Only temporary TEST_ users and tickets, all deleted. Guest restored to points=950, all prefs true, marketing_opt_in=true with the original opt_in_at. settings.public_origin was absent at the start; it was set during the regression run (by the checkout tests and the feedback test) and has been deleted. No real emails sent (send_email replaced by a recorder in the in-process tests; TEST_ addresses are skipped by emailer).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Sign-in testIDs: welcome-signin-btn -> signin-email, signin-password, signin-submit. Rewards points testID: rewards-points. Run tests from /app/backend/tests with -n 0. The in-process tests import server first and use conftest.run (shared loop). Check settings.public_origin after the suite and delete it if it was absent before.",
+  "rca_of_issue": "Signed-out deep link: AuthGate's useEffect calls router.replace('/(auth)/welcome') without saving the current path, and after login it calls router.replace('/(tabs)'). Repro: sign out, open /feedback/{ticket_id}, sign in, and you land on '/'. Fix: save the pathname (state or a 'next' param) before redirecting, then replace to it after login."
+}

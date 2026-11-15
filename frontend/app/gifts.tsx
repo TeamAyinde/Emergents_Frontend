@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { useState } from "react";
-import { Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import FeatherIcon from "@react-native-vector-icons/feather";
 
@@ -11,6 +11,7 @@ import { LEVEL_INFO } from "@/src/levels";
 import { startCheckout } from "@/src/payments";
 import { colors, radius, spacing } from "@/src/theme";
 import { LuxButton } from "@/src/ui";
+import { GiftRow } from "@/src/gift-row";
 
 /** Buy a Silver or Gold month for a friend, share the code, or redeem one. */
 export default function Gifts() {
@@ -36,10 +37,6 @@ export default function Gifts() {
       qc.invalidateQueries();
     },
   });
-
-  function share(c: string, lvl: string) {
-    Share.share({ message: `I got you a month of Nocturne ${LEVEL_INFO[lvl as "silver"].label} 🥂 Redeem code ${c} in the app under Profile → Gifts.` }).catch(() => {});
-  }
 
   return (
     <View style={styles.root}>
@@ -72,7 +69,7 @@ export default function Gifts() {
           testID="gift-email-input"
           value={email}
           onChangeText={setEmail}
-          placeholder="Friend's email (optional)"
+          placeholder="Friend's email (we'll send them the code)"
           placeholderTextColor={colors.muted}
           keyboardType="email-address"
           autoCapitalize="none"
@@ -97,21 +94,7 @@ export default function Gifts() {
         <Text style={styles.muted}>You will get a gift code to share. It stays valid until it is redeemed.</Text>
 
         {gifts?.length ? <Text style={styles.section}>Your gifts</Text> : null}
-        {gifts?.map((g) => (
-          <View key={g.id} style={styles.gift} testID={`gift-${g.code}`}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.code}>{g.code}</Text>
-              <Text style={styles.muted}>
-                {LEVEL_INFO[g.level as "silver"].label} · {g.redeemed ? `Redeemed by ${g.redeemed_by_name ?? "a friend"}` : g.recipient_email ?? "Not redeemed yet"}
-              </Text>
-            </View>
-            {!g.redeemed ? (
-              <Pressable testID={`gift-share-${g.code}`} onPress={() => share(g.code, g.level)} style={styles.shareBtn}>
-                <FeatherIcon name="share-2" size={16} color={colors.brandPrimary} />
-              </Pressable>
-            ) : null}
-          </View>
-        ))}
+        {gifts?.map((g) => <GiftRow key={g.id} gift={g} />)}
 
         <Text style={styles.section}>Got a gift?</Text>
         <View style={styles.row}>

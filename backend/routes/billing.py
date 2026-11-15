@@ -13,7 +13,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from server import LEVEL_PRICE, current_user, db, require_roles
-from stripe_core import OWN_KEY, call, g, ts
+from services.stripe_core import OWN_KEY, call, g, ts
 
 router = APIRouter(prefix="/api")
 UserDep = Annotated[dict, Depends(current_user)]
@@ -178,6 +178,12 @@ async def toggle_renewal(action: Literal["cancel", "resume"], user: UserDep):
     except Exception:
         raise HTTPException(503, "Could not reach Stripe — try again")
     await _apply_subscription(user, sub)
+    from routes.engage import apply_winback, on_renewal_cancelled  # noqa: E402
+
+    if action == "cancel":
+        await on_renewal_cancelled(user)
+    else:
+        await apply_winback(await db.users.find_one({"id": user["id"]}, {"_id": 0}), sid)
     return await _sub_out(user["id"])
 
 
@@ -223,7 +229,7 @@ async def quote_spotlight(event_id: str, plan: str, user: dict) -> dict:
     ev_date = ev["date"] if ev["date"].tzinfo else ev["date"].replace(tzinfo=timezone.utc)
     if ev_date < _now():
         raise HTTPException(400, "This event has already happened")
-    from growth import spotlight_check  # noqa: E402
+    from routes.growth import spotlight_check  # noqa: E402
 
     ok, reason, _ = await spotlight_check(event_id, user)
     if not ok:
@@ -235,7 +241,7 @@ async def quote_spotlight(event_id: str, plan: str, user: dict) -> dict:
 
 async def apply_spotlight(tx: dict) -> str:
     p = tx["payload"]
-    from growth import spotlight_check  # noqa: E402 — re-check the daily cap when the payment lands
+    from routes.growth import spotlight_check  # noqa: E402 — re-check the daily cap when the payment lands
 
     user = await db.users.find_one({"id": tx["user_id"]}, {"_id": 0})
     ok, reason, _ = await spotlight_check(p["event_id"], user)

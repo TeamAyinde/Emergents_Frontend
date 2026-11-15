@@ -9,6 +9,7 @@ import { colors, radius, spacing } from "@/src/theme";
 import { LuxButton } from "@/src/ui";
 import { BoostCard } from "@/src/boost-card";
 import { EarningsCard } from "@/src/earnings-card";
+import { HostFeedbackCard } from "@/src/host-feedback-card";
 
 export default function HostStudio() {
   const router = useRouter();
@@ -38,6 +39,7 @@ export default function HostStudio() {
             <View style={{ gap: spacing.md, marginBottom: spacing.sm }}>
               <LuxButton testID="host-new-event-btn" label="Post a new event" onPress={() => router.push("/host/new-event")} />
               <EarningsCard />
+              <HostFeedbackCard />
               <Text style={styles.muted}>
                 {venues?.length ? `Your venues: ${venues.map((v) => v.name).join(", ")}` : "Add your venue when you post your first event."}
               </Text>

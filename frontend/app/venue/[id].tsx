@@ -98,7 +98,10 @@ export default function VenueDetails() {
               <Text style={styles.meta}>{v.city}, {v.state}</Text>
               <Text style={styles.metaDot}>·</Text>
               <FeatherIcon name="star" size={13} color={colors.brandPrimary} />
-              <Text style={styles.meta}>{v.rating.toFixed(1)}</Text>
+              <Text style={styles.meta} testID="venue-guest-rating">
+                {(v.guest_rating ?? v.rating).toFixed(1)}
+                {v.guest_rating_count ? ` · ${v.guest_rating_count} guest rating${v.guest_rating_count === 1 ? "" : "s"}` : ""}
+              </Text>
               <Text style={styles.metaDot}>·</Text>
               <Text style={styles.meta}>{v.price_range}</Text>
             </View>

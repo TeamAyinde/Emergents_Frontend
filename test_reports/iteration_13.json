@@ -1,0 +1,45 @@
+{
+  "summary": "Iteration 13. All 3 new features work end to end. The new file test_nocturne_iter13.py has 7 tests and all 7 pass. The full backend regression, run serially with -n 0 and a 900 s timeout, gives 187 passed and 0 failed in 186 s. (1) Gift email delivery works. A paid Gold gift with recipient delivered@resend.dev gets email_status 'sent', both in-process and through the real server: a Stripe 4242 payment in the browser led to a backend log line 'POST integrations.emergentagent.com/api/v1/email/send 202 Accepted' and gift GIFT-C0EBF5 with email_status 'sent'. A gift with no email has email_status null. A template test, with send_email patched so no mail goes out, confirms that HTML in both the buyer's name and the note is escaped (the script and a tags appear as &lt;...&gt;), the code is in the body, and _assert_safe_email accepts the template. When sending fails, the status is 'failed: Failed to send email' (no more than 120 characters). (2) Gift status works. After a redeem, /auth/me returns gift_level 'gold' and gift_until about 30 days out (ISO with Z). An expired gift_until is no longer returned and level falls back to bronze. In the UI a TEST_ redeemer saw 'Enjoy Gold until Dec 14.', then Profile showed 'GOLD MEMBER' and '🎁 Gifted Gold until Dec 14, 2026' (profile-gift-status). The buyer's Profile has no gift line. (3) Promoter rank works. /promoter/stats rank equals the position on /promoter/leaderboard/monthly. This holds for the empty board (rank 1) and for a seeded board where a TEST_ promoter with 50 guests is #1 and promoter@ is #2. The Promote tab shows 'RANK THIS MONTH #1'. The Gifts screen row shows 'Gold · delivered@resend.dev · emailed ✓'. Only delivered@resend.dev was ever used as a real recipient. No deprecated Expo packages detected. No SafeAreaView issues detected.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/promoter/stats (server.py:760)", "issue": "A promoter who is not on the monthly board gets rank len(board)+1. With an empty board (today), a promoter with 0 guests is shown as '#1', and every unranked promoter ties at N+1. Suggest returning null or 0 when they are unranked, and showing '—' or 'Unranked' in the UI."},
+      {"endpoint": "payments._complete -> create_gift -> email_gift (growth.py:152)", "issue": "The email is sent inline, inside fulfilment (the webhook or the status poll), with a 30 s httpx timeout. A slow email proxy delays the payment-result poll and the Stripe webhook response. Consider asyncio.create_task or a background task. There is also no resend option when the status is 'failed'."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Promote", "issues": ["'Rank this month #1' is shown when the leaderboard is empty and the promoter has 0 guests (see the backend note)."]},
+      {"screen": "Gifts", "issues": ["The ' · emailed ✓' suffix has no testID of its own and sits inline in muted text. Consider a testID such as gift-email-status-<code>."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_nocturne_iter13.py",
+    "/app/backend/tests/setup_ui_iter13.py",
+    "/app/test_reports/pytest/iter13.xml",
+    "/app/test_reports/pytest/full_iter13.xml"
+  ],
+  "action_items": [
+    "Optional: return no rank (null or '—') from /promoter/stats when the promoter is not on this month's board, instead of len(board)+1.",
+    "Optional: send the gift email in the background (create_task) so the 30 s email timeout cannot block payment fulfilment. Add a 'resend email' action for failed sends."
+  ],
+  "critical_code_review_comments": [
+    "The email template is a fixed template. The buyer's name, the note, the code and EMAIL_FROM_NAME are all html.escape'd and there are no links. Failures are caught and saved as 'failed: ...', so a payment is never rolled back by an email error.",
+    "_complete is idempotent (find_one_and_update on fulfilled != True), so the gift email is sent at most once per payment.",
+    "_active_gift checks the expiry in UTC, and UserOut serialises gift_until with Z, so the Profile date shows correctly.",
+    "Leftover data I did not create: user test_b4e8440e@nocturne.app ('TEST_ Rewards', created 16:12:37, before my runs; likely from the earlier regression run that was cut off by the timeout, or from another run). I did not delete it."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_nocturne_iter13.py (new, 7 tests)",
+    "/app/backend/tests/setup_ui_iter13.py (new, creates and cleans up the UI TEST_ users)"
+  ],
+  "success_rate": {"backend": "100% (7/7 iter13 tests; full suite 187/187 with -n 0)", "frontend": "100% of the requested flows"},
+  "seed_data_creation": "None kept. The UI buyer and redeemer TEST_ users, gift GIFT-C0EBF5 and its payment transaction were deleted by id. The pytest fixture removed its own TEST_ users, gifts and sessions, and the seeded TEST_ tickets for the promoter. Final state: gifts 0, TEST_ tickets 0, awards 0, guest@ is bronze with no gift fields. Real emails were sent only to delivered@resend.dev (3 in total).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run the full suite with: setsid nohup timeout 900 python -m pytest /app/backend/tests/ -n 0 ... > /tmp/x.log & and then poll the log. It takes about 3 minutes. The command itself may hang the bash tool for 120 s, but the run continues. test_nocturne_iter13.py::test_gift_with_email_is_sent sends a real email to delivered@resend.dev; never change that address. On the web the Profile logout-btn must be clicked without force=True: a forced click falls through to the tab bar.",
+  "rca_of_issue": ""
+}

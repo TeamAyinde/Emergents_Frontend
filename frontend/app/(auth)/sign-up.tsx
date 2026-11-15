@@ -47,6 +47,7 @@ export default function SignUp() {
   const [phone, setPhone] = useState("");
   const [city, setCity] = useState("");
   const [optIn, setOptIn] = useState(true);
+  const [invite, setInvite] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -62,6 +63,7 @@ export default function SignUp() {
       await signUp({
         email: email.trim(), password, full_name: name.trim(), role, membership_tier,
         phone: phone.trim() || undefined, city: city.trim() || undefined, marketing_opt_in: optIn,
+        invite_code: role === "guest" ? invite.trim() || undefined : undefined,
       });
       // every paid plan is a monthly card subscription; gentlemen get 7 days free before the first charge
       if (role !== "venue_owner" && !(level === "bronze" && tier === "free_girl")) {
@@ -168,6 +170,9 @@ export default function SignUp() {
               <Field label="Password" testID="signup-password" value={password} onChangeText={setPassword} secureTextEntry />
               <Field label="Phone (optional)" testID="signup-phone" value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
               <Field label="City (optional)" testID="signup-city" value={city} onChangeText={setCity} />
+              {role === "guest" ? (
+                <Field label="Invite code (optional)" testID="signup-invite" value={invite} onChangeText={(t: string) => setInvite(t.toUpperCase())} />
+              ) : null}
               <Pressable testID="signup-optin" accessibilityRole="checkbox" accessibilityState={{ checked: optIn }} onPress={() => setOptIn(!optIn)} style={styles.optin}>
                 <View style={[styles.box, optIn && styles.boxOn]}>
                   {optIn ? <Text style={styles.check}>✓</Text> : null}

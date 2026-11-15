@@ -30,7 +30,7 @@ def simulate_paid(session_id: str) -> dict:
     (payments._complete) in-process against the same DB. Returns the payment transaction."""
     sys.path.insert(0, "/app/backend")
     import server  # noqa: F401  (import order mirrors uvicorn)
-    import payments
+    from routes import payments
     run(payments._complete(session_id))
     return _DB.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
 
@@ -46,3 +46,4 @@ def set_level(uid: str, level: str) -> None:
 # Iteration 8: the iteration-7 LEGACY_402 skip list was removed. Legacy tests now set up paid items via the credit
 # path of POST /api/payments/checkout (grant_credit), credit-covered direct purchase, a simulated card payment
 # (simulate_paid) or a simulated paid upgrade (set_level), and assert 402 on the direct paid endpoints.
+

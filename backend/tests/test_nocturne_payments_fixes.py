@@ -216,7 +216,7 @@ def test_new_checkout_closes_previous_and_cancel_by_tx_id():
 def _payments():
     sys.path.insert(0, "/app/backend")
     import server  # noqa: F401  (import order mirrors uvicorn: server -> extras/features/payments)
-    import payments
+    from routes import payments
     return payments
 
 

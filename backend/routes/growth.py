@@ -1,5 +1,6 @@
 """Monthly promoter leaderboard (with winner bonus), gift memberships, spotlight rules."""
 import secrets
+from html import escape
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, List, Optional
@@ -76,6 +77,9 @@ async def _award_last_month() -> Optional[dict]:
     except DuplicateKeyError:
         return await db.leaderboard_awards.find_one({"_id": last})
     await db.users.update_one({"id": top[0].user_id}, {"$inc": {"wallet_balance": WINNER_BONUS}})
+    from routes.notify import background, winner_email  # noqa: E402
+
+    background(winner_email(award))
     return award
 
 
@@ -123,6 +127,7 @@ class GiftOut(BaseModel):
     note: Optional[str] = None
     redeemed: bool = False
     redeemed_by_name: Optional[str] = None
+    email_status: Optional[str] = None
     created_at: datetime
 
 
@@ -147,7 +152,40 @@ async def create_gift(tx: dict) -> str:
         "buyer_id": tx["user_id"], "recipient_email": p.get("recipient_email"), "note": p.get("note"),
         "redeemed": False, "amount": tx["amount"], "created_at": _now(),
     })
+    if p.get("recipient_email"):
+        from routes.notify import background  # noqa: E402 — never slow the payment confirmation
+
+        await db.gifts.update_one({"id": gid}, {"$set": {"email_sends": 1}})
+        background(email_gift(gid))
     return gid
+
+
+async def email_gift(gid: str) -> None:
+    """Emails the code to the friend (fixed template; buyer's note is escaped)."""
+    from services.emailer import EMAIL_FROM_NAME, send_email  # noqa: E402
+
+    gift = await db.gifts.find_one({"id": gid}, {"_id": 0})
+    buyer = await db.users.find_one({"id": gift["buyer_id"]}, {"_id": 0, "full_name": 1})
+    name = escape((buyer or {}).get("full_name", "A friend"))
+    level = gift["level"].capitalize()
+    note = f'<p style="font-style:italic;color:#555">&ldquo;{escape(gift["note"])}&rdquo;</p>' if gift.get("note") else ""
+    html = (
+        '<table role="presentation" width="100%"><tr><td style="padding:24px;font-family:Arial,sans-serif;color:#111">'
+        f'<h2 style="margin:0 0 12px">{name} gifted you a month of {escape(EMAIL_FROM_NAME)} {level}</h2>'
+        f"{note}"
+        '<p>Your gift code:</p>'
+        f'<p style="font-size:24px;font-weight:bold;letter-spacing:2px;color:#b8860b">{escape(gift["code"])}</p>'
+        f'<p>Open the {escape(EMAIL_FROM_NAME)} app, go to Profile &rarr; Gifts and enter the code to unlock '
+        f'{gift["days"]} days of {level} perks.</p>'
+        f'<p style="font-size:12px;color:#888">Sent by {escape(EMAIL_FROM_NAME)}. We never ask for your password or card details by email.</p>'
+        "</td></tr></table>"
+    )
+    try:
+        await send_email(to=gift["recipient_email"], subject=f"{(buyer or {}).get('full_name', 'A friend')} sent you a {EMAIL_FROM_NAME} gift", html=html)
+        status = "sent"
+    except Exception as exc:
+        status = f"failed: {exc}"[:120]
+    await db.gifts.update_one({"id": gid}, {"$set": {"email_status": status}})
 
 
 @router.get("/gifts/mine", response_model=List[GiftOut])

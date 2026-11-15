@@ -53,6 +53,12 @@
           "cameraPermission": "Scan guest tickets for instant check-in",
           "recordAudioAndroid": false
         }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#000000"
+        }
       ]
     ],
     "experiments": {

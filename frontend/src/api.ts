@@ -49,6 +49,8 @@ export type User = {
   level: "bronze" | "silver" | "gold";
   points: number;
   credit_balance: number;
+  gift_level?: string | null;
+  gift_until?: string | null;
   phone?: string | null;
   city?: string | null;
 };
@@ -62,6 +64,7 @@ export type SignUpBody = {
   phone?: string;
   city?: string;
   marketing_opt_in: boolean;
+  invite_code?: string;
 };
 
 export type Venue = {
@@ -77,6 +80,8 @@ export type Venue = {
   min_level: string;
   featured_until?: string | null;
   featured?: boolean;
+  guest_rating?: number | null;
+  guest_rating_count?: number;
 };
 
 export type EventItem = {
@@ -179,6 +184,8 @@ export const api = {
       body: JSON.stringify({ email, password }),
     }),
   me: () => request<User>("/auth/me"),
+  registerPush: (body: { user_id: string; platform: string; device_token: string }) =>
+    request<{ status: string }>("/register-push", { method: "POST", body: JSON.stringify(body) }),
   googleSession: (session_id: string) =>
     request<{ access_token: string; user: User }>("/auth/session", {
       method: "POST",
@@ -196,12 +203,31 @@ export const api = {
   markWithdrawalPaid: (id: string) => request<{ ok: boolean }>(`/admin/withdrawals/${id}/paid`, { method: "POST" }),
   hostPayouts: () => request<{ owed: number; paid: number }>("/host/payouts"),
   hostEarnings: () => request<HostEarnings>("/host/earnings"),
+  hostFeedback: () =>
+    request<{ average: number | null; count: number; items: { id: string; event_title: string; rating: number; comment: string | null; guest: string; created_at: string }[] }>(
+      "/host/feedback",
+    ),
+  myInvites: () =>
+    request<{ code: string; invited: number; rewarded: number; points_earned: number; referrer_points: number; friend_points: number }>("/me/invites"),
+  emailPrefs: () => request<EmailPrefs>("/me/email-prefs"),
+  saveEmailPrefs: (p: EmailPrefs) => request<EmailPrefs>("/me/email-prefs", { method: "PUT", body: JSON.stringify(p) }),
+  feedbackInfo: (ticketId: string) =>
+    request<{ event_title: string; venue_name: string; event_date: string; submitted: boolean; rating: number | null; points: number; can_rate: boolean }>(
+      `/feedback/${ticketId}`,
+    ),
+  submitFeedback: (ticketId: string, rating: number, comment?: string) =>
+    request<{ points: number }>(`/feedback/${ticketId}`, { method: "POST", body: JSON.stringify({ rating, comment }) }),
   monthlyLeaderboard: () => request<MonthlyBoard>("/promoter/leaderboard/monthly"),
   spotlightEligibility: (eventId: string) =>
     request<{ eligible: boolean; reason: string; remaining_today: number }>(`/spotlight/eligibility/${eventId}`),
   myGifts: () => request<Gift[]>("/gifts/mine"),
   redeemGift: (code: string) =>
     request<{ level: string; until: string }>("/gifts/redeem", { method: "POST", body: JSON.stringify({ code }) }),
+  emailGift: (id: string, recipient_email?: string) =>
+    request<{ email_status: string; recipient_email: string }>(`/gifts/${id}/email`, {
+      method: "POST",
+      body: JSON.stringify({ recipient_email }),
+    }),
   subscription: () => request<Subscription>("/membership/subscription"),
   setRenewal: (action: "cancel" | "resume") =>
     request<Subscription>(`/membership/subscription/${action}`, { method: "POST" }),
@@ -352,8 +378,9 @@ export type MonthlyBoard = {
 };
 export type Gift = {
   id: string; code: string; level: string; days: number; recipient_email: string | null; note: string | null;
-  redeemed: boolean; redeemed_by_name: string | null; created_at: string;
+  redeemed: boolean; redeemed_by_name: string | null; email_status?: string | null; created_at: string;
 };
+export type EmailPrefs = { reminders: boolean; receipts: boolean; feedback: boolean; offers: boolean; newsletter: boolean };
 export type HostEarnings = {
   owed: number; paid: number;
   by_source: Record<string, { count: number; amount: number }>;

@@ -1,0 +1,38 @@
+{
+  "summary": "Frontend-only smoke regression at 390x844. Signed in by email and password as guest, promoter, venue_owner and admin. For every role, the Home feed (10 event cards), Promote, Explore (venue search and list), an event detail page and the Profile tab all loaded with no page errors. Guest: the event page loaded (CTA 'Unlock with Silver', correct for Bronze), the Membership screen showed 3 levels with Bronze marked CURRENT, a concierge chat message was sent and the auto-reply appeared, and My Tickets showed the empty state (guest has 0 tickets). Venue owner: Host Studio listed 4 events with Earnings and Guest feedback, and the host event detail rendered its Requests, Guest list and Table bookings sections (all 0 for Crimson Hour). Admin: the dashboard showed revenue and stats; in the Concierge inbox, Ava's thread showed the guest message and the admin reply was sent and shown. Signing out and back in worked. Push on web: there were no errors from setupPush or the notification listeners, so the Platform.OS==='web' guards work. The only push-related console output is one harmless warning that fires when expo-notifications is imported on web. Data defect found: the seeded promoter wallet_balance is -22.80 in the DB and the Profile shows '$-22.80'. The promoter has 0 tickets and 0 withdrawals, so the true value is 0. Old test cleanups subtracted their wallet deltas more than once.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "seed data / users.wallet_balance", "issue": "promoter@nocturne.app wallet_balance = -22.799999999999997 in the DB. There are no promoter tickets or withdrawals, so it should be 0. Cause: test cleanups ran $inc with -delta (tests/test_nocturne_api.py:60, test_nocturne_payments.py:86, test_nocturne_iter12.py:179) more than once or without the matching earning. The publish-day UI shows '$-22.80'."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Profile wallet card", "issue": "A negative balance shows as '$-22.80'. Clamp the value or format it as '-$22.80'. The real fix is the data reset.", "testID": "wallet-balance", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [
+      {"flow": "Cold load while signed out", "issue": "GET /api/concierge/unread returns 401 and logs a console error. The useQuery in app/(tabs)/index.tsx:46 has no `enabled: !!user`, so (tabs)/index mounts and fires the request before AuthGate redirects to the welcome screen. It also keeps polling every 15s. Harmless but noisy.", "affected_testIDs": ["concierge-unread-dot"]}
+    ],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "expo-notifications on web", "issue": "Importing expo-notifications at module level logs a warning on web: '[expo-notifications] Listening to push token changes is not yet fully supported on web.' It is not an error, and all calls are guarded. Reference: /app/frontend/app/_layout.tsx:6, /app/frontend/src/push.ts:4"}
+    ]
+  },
+  "test_report_links": [".screenshots/g_*.png", ".screenshots/p_*.png", ".screenshots/v_*.png", ".screenshots/a_*.png"],
+  "action_items": [
+    "Reset promoter@nocturne.app wallet_balance to 0 (it is -22.80 because of test cleanup double decrements). Make the test cleanups idempotent, e.g. restore a saved starting balance instead of running $inc -delta.",
+    "Optional: add `enabled: !!user` to the concierge-unread useQuery in app/(tabs)/index.tsx:46 to stop the 401 before sign-in and after sign-out.",
+    "Optional: show negative wallet balances as -$X.XX or clamp them to 0 in the profile wallet card."
+  ],
+  "critical_code_review_comments": [
+    "push.ts: setupPush is correctly skipped on web and on simulators (!Device.isDevice), and errors are caught. _layout.tsx sets the notification handler and listeners only when Platform.OS !== 'web'. The Android channel is created when OS is android. OK.",
+    "push.ts uses getDevicePushTokenAsync (a raw FCM/APNs token) for the Emergent push relay. Confirm this on a native build: Android FCM tokens need Firebase config in the build, and push cannot be tested in the web preview.",
+    "EMERGENT_PUSH_KEY is set in backend/.env. routes/push.py falls back to the default 'placeholder' when it is missing; per policy the env var should have no default."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not tested (per request)", "frontend": "100% of requested flows passed (1 data defect found)"},
+  "seed_data_creation": "Sent 1 guest concierge message (which created 1 auto-reply and the thread) and 1 admin reply, all prefixed TEST_. I deleted them afterwards by id: 3 concierge_messages and the 1 concierge_thread for Ava that this run created.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Tab bar items have no testIDs; use page.get_by_role('tab', name='Home'|'Promote'|'Explore'|'Profile'). Guest Ava is Bronze, so event CTAs show 'Unlock with Silver'. Admin inbox thread testID is thread-{member_id}; the chat uses chat-input/chat-send-btn/chat-list. Clean up concierge messages by id afterwards."
+}

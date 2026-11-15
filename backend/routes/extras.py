@@ -385,7 +385,7 @@ async def change_level(body: UpgradeIn, user: UserDep):
     # every paid level is a monthly Stripe plan; only a free Bronze switch happens here
     if not (body.level == "bronze" and user.get("membership_tier") == "free_girl"):
         raise HTTPException(402, "Payment required — continue to checkout")
-    from billing import cancel_subscription_now  # noqa: E402
+    from routes.billing import cancel_subscription_now  # noqa: E402
 
     await cancel_subscription_now(user)
     now = datetime.now(timezone.utc)

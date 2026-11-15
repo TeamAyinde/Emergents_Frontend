@@ -10,23 +10,24 @@ from typing import Annotated, List, Literal, Optional
 from urllib.parse import quote
 
 import json
+import logging
 
 import stripe
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, EmailStr, Field
 
-from billing import (
+from routes.billing import (
     YEARLY_PRICE, activate_subscription, apply_boost, apply_spotlight, quote_boost, quote_spotlight, send_transfer, subscription_params, sync_account_id,
     sync_subscription_id, trial_eligible,
 )
-from growth import create_gift, quote_gift
-from features import approved_request, quote_table, save_table
+from routes.growth import create_gift, quote_gift
+from routes.features import approved_request, quote_table, save_table
 from server import (
     LEVEL_PRICE, LEVEL_RANK, ReservationIn, amount_due, current_user, db, issue_ticket,
     quote_reservation, require_level, require_roles, save_reservation, ticket_price,
 )
-from stripe_core import call, create_session, g, retrieve_session, session_paid
+from services.stripe_core import OWN_KEY, call, create_session, g, retrieve_session, session_paid
 
 router = APIRouter(prefix="/api")
 UserDep = Annotated[dict, Depends(current_user)]
@@ -186,6 +187,10 @@ async def _complete(session_id: str) -> None:
     try:
         rid = await _fulfil(tx, session_id)
         await db.payment_transactions.update_one({"session_id": session_id}, {"$set": {"result_id": rid}})
+        if tx["kind"] in ("ticket", "table", "reservation"):
+            from routes.notify import background, booking_email  # noqa: E402
+
+            background(booking_email({**tx, "result_id": rid}, rid))
     except Exception as exc:
         # paid but could not be fulfilled (e.g. table taken meanwhile): return credit, flag card refund for admin
         detail = exc.detail if isinstance(exc, HTTPException) else "Booking could not be completed"
@@ -193,6 +198,14 @@ async def _complete(session_id: str) -> None:
             {"session_id": session_id},
             {"$set": {"status": "failed", "error": detail, "needs_refund": tx["amount"] > 0}})
         await _refund_credit(tx)
+        return
+    if tx["kind"] in ("ticket", "table", "reservation"):
+        try:  # never let a bonus-points hiccup undo a confirmed booking
+            from routes.engage import reward_referral  # noqa: E402
+
+            await reward_referral(tx["user_id"])
+        except Exception:
+            logging.getLogger("payments").exception("referral reward failed for %s", tx["user_id"])
 
 
 async def _close_open(tx: dict) -> None:
@@ -275,6 +288,8 @@ async def create_checkout(body: CheckoutIn, user: UserDep):
             await db.users.update_one({"id": user["id"]}, {"$inc": {"credit_balance": credit}})
         raise HTTPException(503, "Payments are unavailable right now — try again")
     tx.update(session_id=session.id, status="initiated", payment_status="unpaid", origin=origin)
+    if origin.startswith("https://"):  # used for QR images in reminder emails
+        await db.settings.update_one({"_id": "public_origin"}, {"$set": {"url": origin}}, upsert=True)
     await db.payment_transactions.insert_one(tx)
     return CheckoutOut(url=session.url, session_id=session.id, amount=due)
 
@@ -340,6 +355,11 @@ async def stripe_webhook(request: Request):
             sub_id = obj.get("subscription") or (((obj.get("parent") or {}).get("subscription_details") or {}).get("subscription"))
             if sub_id:
                 await sync_subscription_id(sub_id)
+            if typ == "invoice.paid" and OWN_KEY:
+                from routes.notify import background, renewal_receipt  # noqa: E402
+
+                inv = await call(stripe.Invoice.retrieve, obj["id"])  # trust Stripe, not the payload
+                background(renewal_receipt(inv.to_dict() if hasattr(inv, "to_dict") else dict(inv)))
         elif typ == "account.updated":
             await sync_account_id(obj["id"])
     except stripe.StripeError:
@@ -424,6 +444,9 @@ async def settle_venue(venue_id: str, _: AdminDep):
         raise HTTPException(503, g(exc, "user_message") or "Stripe transfer failed — check your Stripe balance")
     res = await db.venue_payables.update_many({"id": {"$in": ids}, "status": "owed"},
                                               {"$set": {"status": "paid", "paid_at": _now(), "transfer_id": tid}})
+    from routes.notify import background, payout_email  # noqa: E402
+
+    background(payout_email(venue_id, ids, tid))
     return {"settled": res.modified_count, "transfer_id": tid}
 
 

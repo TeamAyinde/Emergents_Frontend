@@ -103,6 +103,7 @@ class RegisterIn(BaseModel):
     phone: Optional[str] = Field(default=None, max_length=30)
     city: Optional[str] = Field(default=None, max_length=60)
     marketing_opt_in: bool = True
+    invite_code: Optional[str] = Field(default=None, max_length=20)  # a friend's referral code
 
 
 class LoginIn(BaseModel):
@@ -122,6 +123,8 @@ class UserOut(BaseModel):
     wallet_balance: float
     points: int = 0
     credit_balance: float = 0.0
+    gift_level: Optional[str] = None
+    gift_until: Optional[datetime] = None
     marketing_opt_in: bool = False
     phone: Optional[str] = None
     city: Optional[str] = None
@@ -146,6 +149,8 @@ class VenueOut(BaseModel):
     min_level: str = "bronze"
     featured_until: Optional[datetime] = None
     featured: bool = False
+    guest_rating: Optional[float] = None  # average of post-event feedback
+    guest_rating_count: int = 0
 
 
 class EventOut(BaseModel):
@@ -279,6 +284,13 @@ def issue_token(user: dict) -> str:
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
 
 
+def _active_gift(u: dict) -> dict:
+    until = u.get("gift_until")
+    if until and (until if until.tzinfo else until.replace(tzinfo=timezone.utc)) > datetime.now(timezone.utc):
+        return {"gift_level": u.get("gift_level"), "gift_until": until}
+    return {}
+
+
 def public_user(u: dict) -> UserOut:
     return UserOut(
         id=u["id"],
@@ -292,6 +304,7 @@ def public_user(u: dict) -> UserOut:
         wallet_balance=round(u.get("wallet_balance", 0.0), 2),
         points=int(u.get("points", 0)),
         credit_balance=round(u.get("credit_balance", 0.0), 2),
+        **_active_gift(u),
         marketing_opt_in=u.get("marketing_opt_in", False),
         phone=u.get("phone"),
         city=u.get("city"),
@@ -430,6 +443,11 @@ async def register(body: RegisterIn):
         "marketing_opt_in_at": datetime.now(timezone.utc) if body.marketing_opt_in else None,
         "created_at": datetime.now(timezone.utc),
     }
+    if body.invite_code and body.invite_code.strip():
+        friend = await db.users.find_one({"referral_code": body.invite_code.strip().upper()}, {"_id": 0, "id": 1})
+        if not friend:
+            raise HTTPException(400, "That invite code doesn't exist — check it or leave it blank")
+        doc["referred_by"] = friend["id"]
     await db.users.insert_one(doc)
     doc.pop("_id", None)
     return {"access_token": issue_token(doc), "user": public_user(doc)}
@@ -494,8 +512,11 @@ async def list_venues(city: Optional[str] = None, q: Optional[str] = None):
     if q:
         filt["name"] = {"$regex": re.escape(q), "$options": "i"}
     cursor = db.venues.find(filt, {"_id": 0}).sort("rating", DESCENDING)
-    venues = [VenueOut(**v, featured=_is_featured(v)) async for v in cursor]
-    return sorted(venues, key=lambda v: not v.featured)  # boosted venues first, stable by rating
+    docs = [v async for v in cursor]
+    ratings = await venue_ratings([v["id"] for v in docs])
+    venues = [VenueOut(**v, featured=_is_featured(v), **ratings.get(v["id"], {})) for v in docs]
+    # boosted first, then by the rating guests actually see
+    return sorted(venues, key=lambda v: (not v.featured, -(v.guest_rating or v.rating)))  # boosted venues first, stable by rating
 
 
 @api.get("/venues/{venue_id}", response_model=VenueOut)
@@ -503,7 +524,22 @@ async def get_venue(venue_id: str):
     v = await db.venues.find_one({"id": venue_id}, {"_id": 0})
     if not v:
         raise HTTPException(404, "Venue not found")
-    return VenueOut(**v, featured=_is_featured(v))
+    return VenueOut(**v, featured=_is_featured(v), **(await venue_ratings([v["id"]])).get(v["id"], {}))
+
+
+MIN_GUEST_RATINGS = 3
+
+
+async def venue_ratings(ids: list) -> dict:
+    """venue_id -> {guest_rating, guest_rating_count} from guests' post-event feedback."""
+    out = {}
+    async for r in db.feedback.aggregate([
+        {"$match": {"venue_id": {"$in": ids}}},
+        {"$group": {"_id": "$venue_id", "avg": {"$avg": "$rating"}, "n": {"$sum": 1}}},
+    ]):
+        if r["n"] >= MIN_GUEST_RATINGS:  # a single review shouldn't replace the venue's rating
+            out[r["_id"]] = {"guest_rating": round(r["avg"], 1), "guest_rating_count": r["n"]}
+    return out
 
 
 def _is_featured(v: dict) -> bool:
@@ -743,15 +779,11 @@ async def promoter_stats(
     tickets = stats_doc[0]["tickets"] if stats_doc else 0
     checked = stats_doc[0]["checked_in"] if stats_doc else 0
 
-    # rank
-    all_rank = await db.tickets.aggregate(
-        [
-            {"$match": {"promoter_id": {"$ne": None}}},
-            {"$group": {"_id": "$promoter_id", "earnings": {"$sum": "$promoter_earning"}}},
-            {"$sort": {"earnings": -1}},
-        ]
-    ).to_list(None)
-    rank = next((i + 1 for i, r in enumerate(all_rank) if r["_id"] == user["id"]), len(all_rank) + 1)
+    # rank = position on this month's leaderboard (the one that wins the bonus)
+    from routes.growth import _rank  # noqa: E402
+
+    board = await _rank(datetime.now(timezone.utc).strftime("%Y-%m"), 1000)
+    rank = next((i + 1 for i, r in enumerate(board) if r.user_id == user["id"]), 0)  # 0 = not ranked yet
 
     return PromoterStats(
         total_earnings=round(earnings, 2),
@@ -817,7 +849,7 @@ async def withdraw(
         "amount": body.amount, "fee": fee, "net": net, "status": "pending",
         "created_at": datetime.now(timezone.utc),
     })
-    from billing import try_auto_withdraw  # noqa: E402 — sends to the linked bank when connected
+    from routes.billing import try_auto_withdraw  # noqa: E402 — sends to the linked bank when connected
 
     res = await try_auto_withdraw(wid)
     return {"withdrawn": body.amount, "fee": fee, "net": net, "status": res["status"]}
@@ -872,6 +904,11 @@ async def save_reservation(body: "ReservationIn", user: dict, payment_session: O
     await db.reservations.insert_one(doc)
     await record_venue_share(venue["id"], body.base_price, "reservation", doc["id"])
     await award_points(user, doc["total"], f"Reservation · {venue['name']}")
+    from routes.push import notify as push  # noqa: E402
+
+    push([venue.get("owner_id")], "New reservation",
+         f"{user['full_name']} · {body.service_type} · party of {body.party_size} · {body.date:%b %d}",
+         "/host", key=f"res-{doc['id']}")
     doc.pop("_id", None)
     return ReservationOut(**doc)
 
@@ -884,12 +921,15 @@ async def my_reservations(user: Annotated[dict, Depends(current_user)]):
 
 # ---------- Routes mounting ----------
 
-from extras import router as extras_router  # noqa: E402
-from features import ensure_feature_indexes, router as features_router  # noqa: E402
-from rewards import router as rewards_router  # noqa: E402
-from payments import router as payments_router  # noqa: E402
-from billing import router as billing_router  # noqa: E402
-from growth import router as growth_router  # noqa: E402
+from routes.extras import router as extras_router  # noqa: E402
+from routes.features import ensure_feature_indexes, router as features_router  # noqa: E402
+from routes.rewards import router as rewards_router  # noqa: E402
+from routes.payments import router as payments_router  # noqa: E402
+from routes.billing import router as billing_router  # noqa: E402
+from routes.growth import router as growth_router  # noqa: E402
+from routes.notify import router as notify_router  # noqa: E402
+from routes.engage import router as engage_router  # noqa: E402
+from routes.push import router as push_router  # noqa: E402
 
 app.include_router(api)
 app.include_router(extras_router)
@@ -898,6 +938,9 @@ app.include_router(rewards_router)
 app.include_router(payments_router)
 app.include_router(billing_router)
 app.include_router(growth_router)
+app.include_router(notify_router)
+app.include_router(engage_router)
+app.include_router(push_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -916,8 +959,14 @@ async def _startup():
     app.state.feature_index_task = asyncio.create_task(ensure_feature_indexes())
     app.state.gift_index_task = asyncio.ensure_future(db.gifts.create_index("code", unique=True, name="gift_code"))
     # seed in background so boot is not blocked
-    from seed import seed_all  # local
+    from services.seed import seed_all  # local
     app.state.seed_task = asyncio.create_task(seed_all(db))
+    from routes.notify import reminder_loop  # local
+
+    app.state.reminder_task = asyncio.create_task(reminder_loop())
+    from routes.engage import feedback_loop  # local
+
+    app.state.feedback_task = asyncio.create_task(feedback_loop())
 
 
 @app.on_event("shutdown")

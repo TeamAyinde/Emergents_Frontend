@@ -71,6 +71,10 @@ def cleanup():
         except Exception:
             pass
     DB.payment_transactions.delete_many({"session_id": {"$in": list(C["sessions"])}})
+    # issued via checkout (not inserted by the test): undo tickets_sold and the venue share
+    for t in DB.tickets.find({"user_id": {"$in": C["users"]}, "id": {"$nin": list(C["tickets"])}}, {"_id": 0}):
+        DB.events.update_one({"id": t["event_id"]}, {"$inc": {"tickets_sold": -t.get("quantity", 1)}})
+    DB.venue_payables.delete_many({"record_id": {"$in": [t["id"] for t in DB.tickets.find({"user_id": {"$in": C["users"]}}, {"id": 1})]}})
     DB.tickets.delete_many({"id": {"$in": C["tickets"]}})
     DB.tickets.delete_many({"user_id": {"$in": C["users"]}})
     DB.spotlights.delete_many({"id": {"$in": C["spotlights"]}})

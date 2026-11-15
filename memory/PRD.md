@@ -83,3 +83,36 @@ Money-making hospitality app (founder has construction/club/nightlife/lounge/res
 - Spotlight: promoter must have brought ≥1 guest with their code to that event; cap 2 spotlights/day (/api/spotlight/eligibility/{id})
 - Gift memberships: checkout kind=gift (Silver $49 / Gold $149, 1 month) → GIFT-XXXXXX code; /api/gifts/mine, /api/gifts/redeem; user_level honours active gift_level/gift_until. Screen /gifts (Profile → Gifts)
 - Saved STRIPE_API_KEY (both slots) starts with mk_ — not a Stripe secret key; app keeps using test proxy until an sk_/rk_ key is saved
+
+## Iteration 13 — Gift email, gift status, monthly rank
+- emailer.py (Emergent managed email, from_name Nocturne); gift codes emailed to recipient_email with escaped buyer note; gifts.email_status
+- UserOut gift_level/gift_until (active only) → Profile shows 'Gifted Gold until …'
+- Promoter stats rank = position on this month's leaderboard
+
+## Iteration 14 — Emails
+- notify.py: booking confirmation emails (ticket w/ QR image /api/tickets/{id}/qr.png, table, reservation) sent in background after paid fulfilment; winner announcement email on monthly award; POST /api/gifts/{id}/email resend/change recipient (max 3 successful sends, atomic)
+- emailer skips seed/test addresses (@nocturne.app, test_*, @example.com) and treats rate_limited as pause
+
+## Iteration 15 — Reminder, receipt, payout emails (notify.py)
+- reminder_loop (every 15 min): tickets with event 20–28h away get a day-before email with QR (once per ticket, claim flag reminder_sent)
+- Renewal receipts on invoice.paid billing_reason=subscription_cycle (own key only; invoice re-fetched; dedupe via receipts _id=invoice id)
+- Venue payout summary email to owner after admin settle (by source, total, Stripe vs manual)
+- settings.public_origin saved from https checkouts for QR image links
+
+## Iteration 16 — Email prefs, feedback, win-back (engage.py)
+- GET/PUT /api/me/email-prefs (reminders, receipts, feedback, offers; newsletter=marketing_opt_in); reminders & receipts honour prefs; booking confirmations always sent. Screen /email-settings (Profile → Email preferences)
+- feedback_loop (30 min): tickets 8–36h after event get one 'Rate your night' email linking {public_origin}/feedback/{ticket_id}; POST /api/feedback/{ticket_id} rating 1–5 → +50 points once
+- Win-back: cancelling auto-renew emails one-time 30% off (once per member); resuming applies a once-only Stripe coupon (own key only)
+- Iter16 fixes: AuthGate remembers deep link (pendingPath) and returns after sign-in; feedback can_rate flag; partial prefs PUT; feedback retry off; email-settings rows tappable
+
+## Iteration 17 — Venue ratings, host feedback, referrals
+- feedback docs store venue_id/event_title/user_name; VenueOut guest_rating + guest_rating_count (list & detail); directory/venue page show guest average
+- GET /api/host/feedback (owner's venues, guest first name only) → Host Studio 'Guest feedback' card
+- Sign-up invite_code (guest) → referred_by; first paid night (payments._complete) rewards referrer 200 / friend 100 points once; GET /api/me/invites; Profile 'Invite friends' share row
+- Iter17 fixes: referral reward outside fulfilment try; guest_rating shown only from 3 ratings, directory sorted by shown rating; invite copy-to-clipboard fallback (expo-clipboard); cleaned 19 orphan venue_payables, recomputed tickets_sold, reset negative wallet
+
+## Session (June 2026) — pre-publish
+- Backend reorganised: feature routers in `backend/routes/` (extras, features, rewards, payments, billing, growth, notify, engage, push); shared services in `backend/services/` (stripe_core, emailer, seed); ad-hoc helper scripts in `backend/scripts/`.
+- Push notifications (Emergent managed relay): `POST /api/register-push` (auth, own user only); fire-and-forget pushes for new guest-list/waitlist requests & table bookings (to venue owner/event creator), request approved/declined (to guest), new reservations (to venue owner), concierge replies (to member). Frontend: `src/push.ts` (pre-permission prompt, weekly Settings nudge), handlers/channel/tap routing in `app/_layout.tsx`, `expo-notifications` plugin in app.json.
+- Pending: user to add `google-services.json` (Firebase, package com.emergent.mymobileapp.qqzfhs) and set `expo.android.googleServicesFile` for Android push. Push works only in real builds (not Expo Go / web).
+- Full regression passed (iteration 16/17).

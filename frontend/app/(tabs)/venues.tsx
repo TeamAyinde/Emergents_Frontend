@@ -96,9 +96,12 @@ function VenueCard({ v, onPress }: { v: Venue; onPress: () => void }) {
       <View style={styles.cardBody}>
         <View style={styles.rowBetween}>
           <Text style={styles.cat}>{v.category.toUpperCase()}</Text>
-          <View style={styles.rating}>
+          <View style={styles.rating} testID={`venue-rating-${v.id}`}>
             <FeatherIcon name="star" size={10} color={colors.brandPrimary} />
-            <Text style={styles.ratingText}>{v.rating.toFixed(1)}</Text>
+            <Text style={styles.ratingText}>
+              {(v.guest_rating ?? v.rating).toFixed(1)}
+              {v.guest_rating_count ? ` (${v.guest_rating_count})` : ""}
+            </Text>
           </View>
         </View>
         <Text style={styles.name} numberOfLines={1}>{v.name}</Text>

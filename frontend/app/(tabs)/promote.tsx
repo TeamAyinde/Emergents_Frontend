@@ -74,7 +74,7 @@ export default function Promote() {
             </View>
             <View style={styles.statsRow}>
               <Stat label="Checked in" value={`${stats?.guests_checked_in ?? 0}`} testID="stat-checkin" />
-              <Stat label="Rank" value={`#${stats?.rank ?? "—"}`} testID="stat-rank" />
+              <Stat label="Rank this month" value={stats?.rank ? `#${stats.rank}` : "—"} testID="stat-rank" />
             </View>
 
             <View style={styles.qrCard}>

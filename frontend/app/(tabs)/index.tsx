@@ -43,7 +43,7 @@ export default function Home() {
     queryFn: () => api.listEvents(),
   });
   const filtered = (events ?? []).filter((e) => matches(e, category));
-  const { data: unread } = useQuery({ queryKey: ["concierge-unread"], queryFn: () => api.conciergeUnread(), refetchInterval: 15000 });
+  const { data: unread } = useQuery({ queryKey: ["concierge-unread"], queryFn: () => api.conciergeUnread(), refetchInterval: 15000, enabled: !!user });
 
   return (
     <View style={styles.root}>

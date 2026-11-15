@@ -1,0 +1,42 @@
+{
+  "summary": "Tested venue guest ratings, host feedback and referral rewards. Backend: a new suite (test_nocturne_iter16.py) passed 12/12. The full regression ran serially (-n 0) in 3 foreground chunks and passed 219/219. Ratings: GET /api/venues and /api/venues/{id} return guest_rating (average, 1 decimal; 5+4+4 gives 4.3) and guest_rating_count. The count goes up with each POST /api/feedback, feedback docs store venue_id, and venues with no feedback return null/0 while the seeded rating is still returned. Host feedback: venue@ sees only feedback for venues it owns (none from Velvet Sky); guests appear by first name only with no user_id or email; admin sees all; guest gets 403 and no auth gets 401. Referral: an unknown invite_code returns 400 with a clear message. A blank code is ignored. Codes are case-insensitive. referred_by is set. The first paid booking via the credit path gives the referrer +200 and the friend +100, with ledger rows 'Invited <first>' and 'Welcome bonus · first night'. The card path via simulate_paid gives the same points, with nothing before payment and no repeat on a second simulate. A second booking gives no extra points, and a user with no referrer gets nothing. /me/invites counts are correct. UI (375x667): the sign-up form shows the 'Invite code (optional)' field and upper-cases it. A bad code shows the inline error 'That invite code doesn't exist'. Sign-up with 'ava1guest' set referred_by in the DB. The Profile invite-btn shows 'code AVA1GUEST · 1 joined, 0 pts earned' and Share sends the right message. The directory card shows '5.0 (1)' for Mirage and the seeded '4.6'/'4.5' fallback elsewhere. The venue page shows '5.0 · 1 guest rating'. The Host Studio host-feedback-card shows the average, stars, comment, first name and event. Also found and fixed leaks in older test cleanup (iter12/iter14), which were inflating the host Earnings figure.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "payments._complete", "issue": "reward_referral (and the booking email) runs inside the same try as fulfilment. If reward_referral raises after the ticket is issued, the except block marks the tx 'failed', sets needs_refund and refunds the credit, but the ticket still exists. Move the referral call outside the try or wrap it in its own try/except."},
+      {"endpoint": "POST /api/auth/register (invite_code)", "issue": "referral_code has no unique index (4 random hex chars + a name prefix). If two users share a code, find_one picks one of them at random. Consider a unique index or a retry when the code is generated."},
+      {"endpoint": "GET /api/venues", "issue": "One guest rating replaces the seeded rating completely (Mirage went from 4.6 to 5.0 from a single 5-star). The directory is still sorted by the seeded 'rating', not the shown value. Consider a minimum count (e.g. 3) or a blended average, and sort by the displayed rating."},
+      {"endpoint": "reward_referral", "issue": "No clawback if the first booking is later refunded or cancelled. Credit-only bookings (fully paid by reward credit) also count as 'paid'. This is a policy question; please confirm."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "InviteRow share on web", "issue": "When navigator.share is missing (most desktop browsers and Firefox), Share.share rejects, .catch(() => {}) swallows the error, and the tap does nothing. Fall back to copying to the clipboard (expo-clipboard) and show 'Code copied'. Reference: /app/frontend/src/invite-row.tsx:14-17", "testID": "invite-btn", "priority": "low"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "sign-up", "issues": ["Google sign-in users have no way to enter an invite code (only the email form has signup-invite), so friends who sign up with Google can never be credited."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_nocturne_iter16.py", "/app/backend/tests/setup_ui_iter16.py", "/app/test_reports/pytest/pytest_iter16.xml", "/app/test_reports/pytest/pytest_iter16_reg1.xml", "/app/test_reports/pytest/pytest_iter16_reg2.xml", "/app/test_reports/pytest/pytest_iter16_reg3.xml"],
+  "action_items": [
+    "Move await reward_referral(...) out of the fulfilment try block in payments._complete, or give it its own try/except, so a referral error can't mark a fulfilled booking as failed or refunded.",
+    "InviteRow: add a clipboard fallback and a toast when Share is unavailable on web.",
+    "Optional: show the guest rating only after N ratings or blend it with the seeded rating, and sort the directory by the shown rating. Make referral_code unique.",
+    "DATA POLLUTION from earlier test runs (not created by me, left untouched): 19 orphan venue_payables (status 'owed', record_id points to deleted TEST_ tickets) for Obsidian Supper Club ($120 each) and Mirage Lounge ($160 each), dated 2026-11-14 15:44 to 2026-11-15 00:15. They inflate Host Studio 'Owed to you' ($1200) and /admin/payouts. Event 'Crimson Hour: Open Decks' (dc097beb) has tickets_sold=13 and 'Velvet Sessions' has tickets_sold=13 but only 2 real tickets. promoter@ wallet_balance is -16.2. Please review and clean up. The root cause (iter12/iter14 test cleanup) is now fixed."
+  ],
+  "critical_code_review_comments": [
+    "reward_referral claims the reward atomically (update_one with referral_rewarded $ne True), so a webhook and a status poll racing give points only once. Verified via a repeat simulate_paid.",
+    "Points $inc and the ledger inserts for the two users are not in a transaction (same pattern as feedback).",
+    "host_feedback limits items to 50 and the card shows 10. average and count use the full aggregate. Admin's filter {} includes every venue, as intended.",
+    "Old feedback docs without venue_id would not be counted (no backfill). There are currently 0 feedback docs, so this has no impact today."
+  ],
+  "updated_files": ["/app/backend/tests/test_nocturne_iter16.py (new)", "/app/backend/tests/setup_ui_iter16.py (new)", "/app/backend/tests/test_nocturne_iter12.py (cleanup: undo tickets_sold and delete venue_payables for checkout-issued tickets)", "/app/backend/tests/test_nocturne_iter14.py (same cleanup fix)"],
+  "success_rate": {"backend": "100% (12/12 new; 219/219 serial regression)", "frontend": "95% (all requested flows pass; web share has no fallback)"},
+  "seed_data_creation": "Only temporary TEST_ users, tickets, feedback and checkouts, all deleted by id. Guest points restored to 950. feedback collection is back to 0 docs. settings.public_origin was absent at the start, was set by the https checkouts, and has been deleted. I removed the 2 orphan payables my regression run created via the old iter12/iter14 cleanup, and the matching tickets_sold increments (Velvet Sessions back to 13, Crimson Hour 14 to 13). An unpaid Stripe test-mode membership session from the UI sign-up was left to expire.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run regression in the foreground in chunks of 3-7 files (-n 0, timeout <=290s). A background nohup run gets killed when the tool call ends and leaves TEST_ data behind. Guest referral_code is AVA1GUEST. Sign-up path: welcome-signup-btn -> role-guest -> role-next-btn -> tier-member -> tier-next-btn -> form (signup-invite). The default level is bronze-paid, so sign-up redirects to Stripe membership checkout. Delete settings.public_origin after runs if it was absent before. Check venue_payables count before and after runs (it was 20 after this run).",
+  "rca_of_issue": "Host Earnings inflation: test_nocturne_iter12 and iter14 bought tickets via checkout (credit path / simulate_paid) and their cleanup deleted the tickets but not the venue_payables rows (record_id = ticket id), and did not decrement events.tickets_sold. Each regression run added +$120 for Obsidian / +1 Crimson Hour and +$160 for Mirage / +2 Velvet Sessions. Fixed in the test cleanup and verified with no change in payables count or tickets_sold after a rerun."
+}

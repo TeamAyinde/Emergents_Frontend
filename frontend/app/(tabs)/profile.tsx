@@ -18,6 +18,7 @@ import { useAuth } from "@/src/auth-context";
 import { colors, radius, spacing } from "@/src/theme";
 import { LuxButton } from "@/src/ui";
 import { Level, LEVEL_INFO } from "@/src/levels";
+import { InviteRow } from "@/src/invite-row";
 
 const TIER_LABELS: Record<string, string> = {
   free_girl: "LADIES FREE",
@@ -98,6 +99,12 @@ export default function Profile() {
               {LEVEL_INFO[lvl].label.toUpperCase()} MEMBER{TIER_LABELS[user?.membership_tier ?? ""] && user?.membership_tier !== "member" && lvl === "bronze" ? ` · ${TIER_LABELS[user?.membership_tier ?? ""]}` : ""}
             </Text>
           </Pressable>
+          {user?.gift_level && user?.gift_until ? (
+            <Text style={styles.giftLine} testID="profile-gift-status">
+              🎁 Gifted {LEVEL_INFO[user.gift_level as Level].label} until{" "}
+              {new Date(user.gift_until).toLocaleDateString("en", { month: "short", day: "numeric", year: "numeric" })}
+            </Text>
+          ) : null}
           {user?.role === "guest" || user?.role === "promoter" ? (
             <Pressable testID="manage-membership-btn" onPress={() => router.push("/membership")}>
               <Text style={styles.upgradeLink}>{lvl === "gold" ? "Manage membership" : "Upgrade membership →"}</Text>
@@ -123,6 +130,19 @@ export default function Profile() {
           />
         </View>
         ) : null}
+
+        <InviteRow />
+
+        <Pressable testID="email-prefs-btn" onPress={() => router.push("/email-settings")} style={styles.prefRow}>
+          <View style={styles.rowIcon}>
+            <FeatherIcon name="mail" size={16} color={colors.brandPrimary} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowTitle}>Email preferences</Text>
+            <Text style={styles.rowSub}>Reminders, receipts, offers and newsletter</Text>
+          </View>
+          <FeatherIcon name="chevron-right" size={18} color={colors.muted} />
+        </Pressable>
 
         <Pressable testID="gifts-btn" onPress={() => router.push("/gifts")} style={styles.prefRow}>
           <View style={styles.rowIcon}>
@@ -375,6 +395,7 @@ const styles = StyleSheet.create({
   },
   rewardsValue: { color: colors.onSurface, fontSize: 22, fontWeight: "800" },
   upgradeLink: { color: colors.brandPrimary, fontSize: 13, fontWeight: "700", paddingVertical: spacing.md, minHeight: 44 },
+  giftLine: { color: colors.onSurfaceSecondary, fontSize: 13, marginTop: spacing.xs },
   prefRow: {
     flexDirection: "row", alignItems: "center", gap: spacing.md, backgroundColor: colors.surfaceSecondary,
     borderRadius: radius.lg, padding: spacing.lg, borderWidth: 1, borderColor: colors.border,

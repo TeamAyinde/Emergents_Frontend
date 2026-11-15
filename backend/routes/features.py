@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from pymongo import ASCENDING, DESCENDING
 
+from routes.push import notify as push, venue_owner
 from server import (
     award_points, LEVEL_BOOKING_FEE, TicketOut, VenueOut, amount_due, current_user, db, issue_ticket,
     record_venue_share, require_level, require_roles, ticket_price, user_level,
@@ -115,7 +116,9 @@ async def reply(member_id: str, body: MessageIn, admin: AdminDep):
     member = await db.users.find_one({"id": member_id}, {"_id": 0})
     if not member:
         raise HTTPException(404, "Member not found")
-    return await _post(member, "concierge", f"{admin['full_name'].split()[0]} · Concierge", body.text)
+    msg = await _post(member, "concierge", f"{admin['full_name'].split()[0]} · Concierge", body.text)
+    push([member_id], "Your concierge replied", body.text.strip()[:140], "/concierge", key=f"msg-{msg.id}")
+    return msg
 
 
 # ---------- Table map ----------
@@ -207,6 +210,9 @@ async def save_table(eid: str, tid: str, party_size: int, user: dict, payment_se
         raise HTTPException(409, "Someone just booked this table — pick another")
     await record_venue_share(ev.get("venue_id"), table["min_spend"], "table", doc["id"])
     await award_points(user, doc["total"], f"Table {tid} · {ev['title']}")
+    push(host_ids(ev), "New table booking",
+         f"{user['full_name']} · Table {tid} ({table['section']}) · party of {party_size} · {ev['title']}",
+         f"/host/event/{eid}", key=f"table-{doc['id']}")
     doc.pop("_id", None)
     return TableBookingOut(**doc)
 
@@ -290,6 +296,8 @@ async def join_event(eid: str, body: JoinIn, user: UserDep):
     }
     await db.event_requests.insert_one(doc)
     doc.pop("_id", None)
+    push(host_ids(ev), "New guest list request" if not sold_out else "New waitlist request",
+         f"{user['full_name']} (+{body.quantity - 1}) · {ev['title']}", f"/host/event/{eid}", key=f"req-{doc['id']}")
     return JoinOut(result="waitlisted" if sold_out else "pending", request=RequestOut(**doc))
 
 
@@ -448,6 +456,7 @@ async def decide_request(rid: str, body: DecisionIn, user: HostDep):
         if guest and amount_due(ticket_price(ev, guest, req["quantity"])[2], guest) > 0:
             # paid event: the guest pays at checkout, then the ticket is issued
             req["status"] = new_status
+            _push_decision(req, ev)
             return RequestOut(**req)
         if guest:
             try:
@@ -460,7 +469,21 @@ async def decide_request(rid: str, body: DecisionIn, user: HostDep):
                 await db.events.update_one({"id": ev["id"], "$expr": {"$gt": ["$tickets_sold", "$capacity"]}},
                                            [{"$set": {"capacity": "$tickets_sold"}}])
     req["status"] = new_status
+    _push_decision(req, ev)
     return RequestOut(**req)
+
+
+def _push_decision(req: dict, ev: dict) -> None:
+    if req["status"] == "approved":
+        title, msg = "You're on the list ✨", f"Your request for {ev['title']} was approved. Tap to see your spot."
+    else:
+        title, msg = "Guest list update", f"Your request for {ev['title']} couldn't be accepted this time."
+    push([req["user_id"]], title, msg, f"/event/{ev['id']}", key=f"decision-{req['id']}")
+
+
+async def host_ids(ev: dict) -> list:
+    """Venue owner and event creator — who should hear about new requests and bookings."""
+    return [await venue_owner(ev.get("venue_id")), ev.get("created_by")]
 
 
 async def ensure_feature_indexes():
