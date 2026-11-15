@@ -66,6 +66,10 @@ INDEXES: dict[str, list[IndexModel]] = {
         IndexModel([("promoter_id", ASCENDING)], name="promoter"),
         IndexModel([("event_date", ASCENDING)], name="event_date"),
     ],
+    "door_staff": [
+        IndexModel([("venue_id", ASCENDING), ("user_id", ASCENDING)], name="venue_user"),
+        IndexModel([("email", ASCENDING)], name="email"),
+    ],
     "reservations": [
         IndexModel([("id", ASCENDING)], name="id", unique=True),
         IndexModel([("user_id", ASCENDING)], name="user"),
@@ -451,6 +455,9 @@ async def register(body: RegisterIn):
         doc["referred_by"] = friend["id"]
     await db.users.insert_one(doc)
     doc.pop("_id", None)
+    from routes.staff import claim_invites  # noqa: E402
+
+    await claim_invites(doc)
     return {"access_token": issue_token(doc), "user": public_user(doc)}
 
 
@@ -495,6 +502,9 @@ async def google_session(body: GoogleSessionIn):
         }
         await db.users.insert_one(user)
         user.pop("_id", None)
+        from routes.staff import claim_invites  # noqa: E402
+
+        await claim_invites(user)
     return {"access_token": issue_token(user), "user": public_user(user)}
 
 

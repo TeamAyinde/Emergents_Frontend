@@ -1,0 +1,52 @@
+{
+  "summary": "Iteration 22 features (staff email invites, deal results, door guest search, night summary trends) tested end-to-end. Backend: 33/33 pytest pass (new iter22 file 6 tests + updated iter21 16 + iter20 11 regression). Frontend (390x844 web preview): Invited badge, /sign-up?email= prefill, DealCard deal-results on upcoming + past events, SummaryCard with avg + % change, live Find-a-guest search + check-in (owner and door-staff views) all work. Found 1 UI bug (Invited badge text wraps vertically) and a few minor backend issues (unencoded invite link email, guest search 200-user cap). No deprecated Expo packages detected.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/host/staff (invite email)", "issue": "Sign-up link puts the email in the URL without URL-encoding: routes/staff.py:95 f\"/sign-up?email={email}\". Addresses with '+' (e.g. a+b@x.io) prefill as 'a b@x.io' (checked in UI), so the invite isn't claimed if the user doesn't spot it. Fix: urllib.parse.quote(email, safe='')."},
+      {"endpoint": "GET /api/host/events/{eid}/guests", "issue": "hostlive.py:179 searches ALL users with the regex and stops at limit(200), then filters to this event's tickets. With a big user base, common queries ('an', 'jo') can return no results even when ticket holders match. Fix: load this event's ticket user_ids first, then match users with {'id': {'$in': ids}, '$or': [...]}."},
+      {"endpoint": "routes/alerts.py night_report", "issue": "night_stats(ev) runs twice (lines 256 and 270), which doubles the ticket/table/payable queries. Reuse the first result."},
+      {"endpoint": "db.door_staff", "issue": "The collection has no indexes (only _id). Every check-in, live view and registration (claim_invites) queries venue_id/user_id/email. Add indexes on (venue_id, user_id, active) and (email, user_id, active)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "DoorStaffCard invited row", "issue": "On mobile the 'Invited' badge gets squeezed to about 30px wide and its text wraps vertically ('In/vit/ed'). Cause: an invited row's name is the full email, and the name Text has no flexShrink or numberOfLines. Reference: frontend/src/door-staff-card.tsx:74-76,106-111. Fix: name {flexShrink:1} + numberOfLines={1}, badge {flexShrink:0}.", "testID": "staff-invited-{id}", "priority": "medium"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Host Studio door staff", "issues": ["Invited rows show the email twice (name = email, then 'email · venue'). Show the email once with a 'Pending sign-up' subline instead.", "If GET /host/venues fails, the screen shows 'Add your venue when you post your first event.' and hides the Door staff card, which is a misleading error state (app/host/index.tsx:45-49). Show an error or retry instead."]},
+      {"screen": "/host/live/{id} Find a guest", "issues": ["On web, focusing the TextInput draws a white rectangle outline inside the rounded input. Add outlineStyle:'none' (web) to styles.input in src/guest-search.tsx:78.", "Door staff see guests' full name and email in search, but the Door staff card copy says staff can see 'nothing else'. Consider masking the email for is_staff_view, or changing the copy."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_nocturne_iter22_invites_dealresults_search_trends.py",
+    "/app/backend/tests/test_nocturne_iter21_deals_staff_summary.py",
+    "/app/backend/tests/iter22_ui_seed.py",
+    "/app/test_reports/pytest/iter22.xml"
+  ],
+  "action_items": [
+    "Fix the Invited badge wrapping in door-staff-card.tsx (name flexShrink:1 + numberOfLines=1, badge flexShrink:0).",
+    "URL-encode the email in the invite sign-up link (routes/staff.py:95).",
+    "Restrict guest search to this event's ticket holders before applying the regex and limit (hostlive.py:179).",
+    "Optional: reuse night_stats in night_report; add door_staff indexes; show a real error state in Host Studio when venues fail to load; add web outline:none to the guest search input."
+  ],
+  "critical_code_review_comments": [
+    "claim_invites is called on email register and on new Google users. Existing users are linked when they're invited, so that flow is covered.",
+    "Removed (active=false) invites are correctly not claimed on sign-up (tested).",
+    "Deal results window ($gte sent_at, $lte expires_at, user_ids) is correct. Before-deal, after-expiry and non-waitlisted tickets are excluded (tested). revenue = total_paid + credit_used.",
+    "Guest search uses re.escape, so regex special characters are safe (tested '(Regex.*)', 'Z.*Q', '[(')."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_nocturne_iter21_deals_staff_summary.py (unknown email now expects 201 status=invited)",
+    "/app/backend/tests/test_nocturne_iter22_invites_dealresults_search_trends.py (new)",
+    "/app/backend/tests/iter22_ui_seed.py (new)"
+  ],
+  "success_rate": {"backend": "100% (33/33)", "frontend": "95% (all flows work; 1 badge layout bug)"},
+  "seed_data_creation": "iter22_ui_seed.py seed/clean created a TEST_ venue, events, tickets, payables, a TEST_ user and door_staff rows. All were removed by id, and the UI-created staff row was deleted too. No deal or summary_sent flags were left on non-test events, and seeded users' wallet and credit are unchanged (0). The 2 inactive door_staff rows on Club Noire predate this run and were left alone.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: cd /app/backend/tests && python -m pytest test_nocturne_iter22_invites_dealresults_search_trends.py test_nocturne_iter21_deals_staff_summary.py -n 0. Invite emails are tested in-process via mods fixture (emailer.send_email patched) by calling staff._invite_email directly; HTTP invites to unknown emails send a real email (use test_ addresses). TEST_ venues inserted directly into the DB must include the full VenueOut fields (state, category, image_url, rating, price_range, description, min_level), or GET /host/venues returns 500 and Host Studio hides the Door staff card. send_night_summaries in tests: snapshot unflagged non-test events in the 36h window and $unset summary_sent afterwards. The iter21 test doesn't do this yet, but it found no seeded events in the window this run. Sign-up has role/tier steps (role-next-btn, tier-next-btn) before the form, where signup-email is prefilled.",
+  "rca_of_issue": "Badge wrap: in the flex row the name Text (a long email) takes all the width and the badge shrinks. Plus-sign prefill: the raw email is interpolated into the query string, so the URL parser decodes '+' as a space."
+}

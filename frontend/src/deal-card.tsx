@@ -23,7 +23,7 @@ export function DealCard({ eventId, spotsLeft, upcoming }: { eventId: string; sp
     mutationFn: (pct: number) => api.sendDeal(eventId, pct, hours),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["host-live", eventId] }),
   });
-  if (!live || !upcoming) return null;
+  if (!live || (!upcoming && !live.deal)) return null;
   const d = live.deal;
 
   return (
@@ -34,6 +34,13 @@ export function DealCard({ eventId, spotsLeft, upcoming }: { eventId: string; sp
           {d.pct}% off sent to {d.sent_to} waitlisted guest{d.sent_to === 1 ? "" : "s"} ·{" "}
           {d.expired ? "expired" : `ends in ${timeLeft(d.expires_at)}`}
         </Text>
+      ) : null}
+      {d ? (
+        <View style={styles.results} testID="deal-results">
+          <Result label="Bought" value={`${d.buyers} of ${d.sent_to}`} />
+          <Result label="Tickets" value={String(d.tickets)} />
+          <Result label="Revenue" value={`$${d.revenue.toLocaleString("en", { maximumFractionDigits: 2 })}`} />
+        </View>
       ) : live.waitlist === 0 ? (
         <Text style={styles.sub}>Nobody on the waitlist yet.</Text>
       ) : spotsLeft <= 0 ? (
@@ -66,7 +73,20 @@ export function DealCard({ eventId, spotsLeft, upcoming }: { eventId: string; sp
   );
 }
 
+function Result({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.result}>
+      <Text style={styles.resultVal}>{value}</Text>
+      <Text style={styles.resultLabel}>{label}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  results: { flexDirection: "row", gap: spacing.sm },
+  result: { flex: 1, alignItems: "center", paddingVertical: spacing.sm, borderRadius: radius.md, backgroundColor: colors.surface },
+  resultVal: { color: colors.onSurface, fontSize: 16, fontWeight: "800" },
+  resultLabel: { color: colors.muted, fontSize: 11, marginTop: 2 },
   card: { backgroundColor: colors.surfaceSecondary, borderRadius: radius.lg, padding: spacing.lg, gap: spacing.sm, borderWidth: 1, borderColor: colors.brandPrimary },
   title: { color: colors.onSurface, fontSize: 17, fontWeight: "800" },
   sub: { color: colors.muted, fontSize: 13 },

@@ -41,7 +41,7 @@ export function DoorStaffCard({ venues }: { venues: Venue[] }) {
   return (
     <View style={styles.card} testID="door-staff-card">
       <Text style={styles.title}>Door staff</Text>
-      <Text style={styles.sub}>Invite people by their Nocturne email. They can scan tickets and see the live counter, nothing else.</Text>
+      <Text style={styles.sub}>Invite anyone by email. New people get a sign-up link. Staff can scan tickets and see the live counter, nothing else.</Text>
       {venues.length > 1 ? (
         <View style={styles.chips}>
           {venues.map((v) => (
@@ -71,8 +71,11 @@ export function DoorStaffCard({ venues }: { venues: Venue[] }) {
       {(staff ?? []).map((s) => (
         <View key={s.id} style={styles.row} testID={`staff-row-${s.id}`}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.name}>{s.name}</Text>
-            <Text style={styles.sub}>{s.email} · {s.venue_name}</Text>
+            <View style={styles.nameRow}>
+              <Text style={styles.name} numberOfLines={1}>{s.status === "invited" ? s.email : s.name}</Text>
+              {s.status === "invited" ? <Text style={styles.badge} testID={`staff-invited-${s.id}`}>Invited</Text> : null}
+            </View>
+            <Text style={styles.sub} numberOfLines={1}>{s.status === "invited" ? `Sign-up link sent · ${s.venue_name}` : `${s.email} · ${s.venue_name}`}</Text>
           </View>
           <Pressable testID={`staff-remove-${s.id}`} onPress={() => confirmRemove(s.id, s.name)} style={styles.removeBtn} hitSlop={8}>
             <FeatherIcon name="x" size={16} color={colors.muted} />
@@ -100,7 +103,12 @@ const styles = StyleSheet.create({
   invite: { height: 48, paddingHorizontal: spacing.lg, borderRadius: radius.md, alignItems: "center", justifyContent: "center", backgroundColor: colors.brandPrimary },
   inviteText: { color: colors.onBrandPrimary, fontWeight: "800" },
   row: { flexDirection: "row", alignItems: "center", paddingVertical: spacing.sm, borderTopWidth: 0.5, borderTopColor: colors.divider },
-  name: { color: colors.onSurface, fontSize: 15, fontWeight: "700" },
+  name: { color: colors.onSurface, fontSize: 15, fontWeight: "700", flexShrink: 1 },
+  nameRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  badge: {
+    color: colors.brandPrimary, fontSize: 11, fontWeight: "800", paddingHorizontal: spacing.sm, paddingVertical: 2,
+    borderRadius: radius.pill, backgroundColor: colors.brandTertiary, overflow: "hidden", flexShrink: 0,
+  },
   removeBtn: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
   err: { color: colors.error, fontSize: 13 },
 });

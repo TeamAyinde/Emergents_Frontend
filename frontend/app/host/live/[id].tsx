@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import FeatherIcon from "@react-native-vector-icons/feather";
 
 import { api } from "@/src/api";
+import { GuestSearch } from "@/src/guest-search";
 import { colors, radius, spacing } from "@/src/theme";
 
 const BAR_H = 120;
@@ -61,6 +62,8 @@ export default function HostLive() {
             <Stat label="Still to arrive" value={Math.max(0, data.tickets_sold - data.checked_in)} />
             <Stat label="Waitlist" value={data.waitlist} />
           </View>
+
+          <GuestSearch eventId={id!} />
 
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Arrivals by hour</Text>

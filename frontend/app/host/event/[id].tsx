@@ -6,6 +6,7 @@ import FeatherIcon from "@react-native-vector-icons/feather";
 
 import { api, EventRequest } from "@/src/api";
 import { DealCard } from "@/src/deal-card";
+import { SummaryCard } from "@/src/summary-card";
 import { colors, radius, spacing } from "@/src/theme";
 
 export default function HostEvent() {
@@ -46,6 +47,7 @@ export default function HostEvent() {
           {ev ? (
             <DealCard eventId={id!} spotsLeft={(ev.capacity ?? 200) - ev.tickets_sold} upcoming={new Date(ev.date) > new Date()} />
           ) : null}
+          {ev && new Date(ev.date) < new Date() ? <SummaryCard eventId={id!} /> : null}
           <Section title={`Requests & waitlist (${pending.length})`}>
             {pending.length === 0 ? <Text style={styles.muted}>Nobody waiting.</Text> : null}
             {pending.map((r) => (

@@ -33,6 +33,18 @@ class DealOut(BaseModel):
     sent_at: datetime
     expires_at: Optional[datetime] = None
     expired: bool = False
+    buyers: int = 0  # waitlisted guests who bought while the deal ran
+    tickets: int = 0
+    revenue: float = 0.0
+
+
+class GuestHit(BaseModel):
+    ticket_id: str
+    name: str
+    email: str
+    quantity: int
+    checked_in: bool
+    checked_in_at: Optional[datetime] = None
 
 
 class LiveOut(BaseModel):
@@ -49,13 +61,20 @@ class LiveOut(BaseModel):
     is_staff_view: bool = False
 
 
-def _deal(ev: dict) -> Optional[DealOut]:
+async def _deal(ev: dict) -> Optional[DealOut]:
     d = ev.get("deal")
     if not d:
         return None
     exp = d.get("expires_at")
+    window = {"$gte": d["sent_at"], **({"$lte": exp} if exp else {})}
+    rows = await db.tickets.aggregate([
+        {"$match": {"event_id": ev.get("id"), "user_id": {"$in": d.get("user_ids", [])}, "created_at": window}},
+        {"$group": {"_id": "$user_id", "q": {"$sum": "$quantity"},
+                    "r": {"$sum": {"$add": [{"$ifNull": ["$total_paid", 0]}, {"$ifNull": ["$credit_used", 0]}]}}}},
+    ]).to_list(None) if ev.get("id") else []
     return DealOut(pct=d["pct"], sent_to=len(d.get("user_ids", [])), sent_at=d["sent_at"], expires_at=exp,
-                   expired=bool(exp) and _aware(exp) <= datetime.now(timezone.utc))
+                   expired=bool(exp) and _aware(exp) <= datetime.now(timezone.utc),
+                   buyers=len(rows), tickets=sum(r["q"] for r in rows), revenue=round(sum(r["r"] for r in rows), 2))
 
 
 async def _live_access(eid: str, user: dict) -> tuple[dict, bool]:
@@ -99,7 +118,7 @@ async def live(eid: str, user: UserDep):
         tickets_sold=ev.get("tickets_sold", 0), checked_in=total,
         waitlist=await db.event_requests.count_documents({"event_id": eid, "kind": "waitlist", "status": "pending"}),
         by_hour=[HourCount(hour=h["_id"], count=h["n"]) for h in hours], recent=recent,
-        deal=None if staff_only else _deal(ev), is_staff_view=staff_only,
+        deal=None if staff_only else await _deal(ev), is_staff_view=staff_only,
     )
 
 
@@ -134,7 +153,7 @@ async def send_deal(eid: str, body: DealIn, user: HostDep):
     notify(ids, f"{body.pct}% off {ev['title']} ⚡",
            f"A spot just opened and the price dropped — just for you, for the next {left:g} hour{'s' if left != 1 else ''}. Tap to grab it.",
            f"/event/{eid}", key=f"deal-{eid}", kind="updates")
-    return _deal({"deal": deal})
+    return await _deal({"deal": deal})
 
 
 @router.get("/events/{eid}/my-deal")
@@ -146,3 +165,57 @@ async def my_deal(eid: str, user: UserDep):
     if not live_:
         return {"pct": 0, "qty": 0, "expires_at": None}
     return {"pct": d["pct"], "qty": (d.get("user_qty") or {}).get(user["id"], 1), "expires_at": exp}
+
+
+@router.get("/host/events/{eid}/guests", response_model=List[GuestHit])
+async def search_guests(eid: str, user: UserDep, q: str = ""):
+    """Door lookup by guest name or email when a ticket won't scan (owners, admins, door staff)."""
+    _, staff_only = await _live_access(eid, user)
+    q = q.strip().lower()
+    if len(q) < 2:
+        return []
+    tickets = await db.tickets.find({"event_id": eid}, {"_id": 0}).to_list(None)
+    users = {u["id"]: u async for u in db.users.find({"id": {"$in": list({t["user_id"] for t in tickets})}},
+                                                     {"_id": 0, "id": 1, "full_name": 1, "email": 1})}
+    out = []
+    for t in tickets:
+        u = users.get(t["user_id"], {})
+        name, email = u.get("full_name") or "Guest", u.get("email", "")
+        if q not in name.lower() and q not in email.lower():
+            continue
+        if staff_only and "@" in email:  # door staff see enough to confirm identity, not the full address
+            local, domain = email.split("@", 1)
+            email = f"{local[:2]}•••@{domain}"
+        out.append(GuestHit(ticket_id=t["id"], name=name, email=email, quantity=t["quantity"],
+                            checked_in=bool(t.get("checked_in")), checked_in_at=t.get("checked_in_at")))
+        if len(out) >= 25:
+            break
+    return sorted(out, key=lambda g: (g.checked_in, g.name.lower()))
+
+
+class NightTotals(BaseModel):
+    sold: int
+    arrived: int
+    no_shows: int
+    tables: int
+    revenue: float
+    show_rate: Optional[float] = None
+
+
+class SummaryOut(BaseModel):
+    event_id: str
+    title: str
+    date: datetime
+    night: NightTotals
+    peak: Optional[str] = None
+    baseline: Optional[NightTotals] = None  # average of the venue's previous 4 events
+    compared: int = 0
+    change: dict = {}  # metric -> % change vs baseline
+
+
+@router.get("/host/events/{eid}/summary", response_model=SummaryOut)
+async def event_summary(eid: str, user: HostDep):
+    from routes.alerts import night_report  # noqa: E402
+
+    ev = await _own_event(eid, user)
+    return SummaryOut(**await night_report(ev))

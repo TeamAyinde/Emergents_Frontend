@@ -243,18 +243,70 @@ async def night_stats(ev: dict) -> dict:
             "peak": (peak[0].strftime("%-I %p").lower(), peak[1]) if peak else None}
 
 
-def summary_html(ev: dict, s: dict) -> str:
+TREND_METRICS = (("arrived", "guests"), ("revenue", "revenue"), ("show_rate", "show-up rate"))
+
+
+def _totals(s: dict) -> dict:
+    return {"sold": s["sold"], "arrived": s["arrived"], "no_shows": s["no_shows"], "tables": s["tables"], "revenue": s["revenue"],
+            "show_rate": round(100 * s["arrived"] / s["sold"], 1) if s["sold"] else None}
+
+
+async def night_report(ev: dict) -> dict:
+    """This night's totals plus the average of the venue's previous 4 events and the % change against it."""
+    stats = await night_stats(ev)
+    night = _totals(stats)
+    prev = await db.events.find({"venue_id": ev.get("venue_id"), "id": {"$ne": ev["id"]}, "date": {"$lt": ev["date"]}},
+                                {"_id": 0}).sort("date", -1).limit(4).to_list(4) if ev.get("venue_id") else []
+    baseline, change = None, {}
+    if prev:
+        rows = [_totals(await night_stats(p)) for p in prev]
+        avg = lambda k: (lambda vals: round(sum(vals) / len(vals), 1) if vals else None)([r[k] for r in rows if r[k] is not None])  # noqa: E731
+        baseline = {k: avg(k) for k in ("sold", "arrived", "no_shows", "tables", "revenue", "show_rate")}
+        baseline = {**baseline, **{k: int(round(baseline[k] or 0)) for k in ("sold", "arrived", "no_shows", "tables")}}
+        baseline["revenue"] = baseline["revenue"] or 0.0
+        for k, _ in TREND_METRICS:
+            b, n = baseline.get(k), night.get(k)
+            if b and n is not None:
+                change[k] = round(100 * (n - b) / b)
+    return {"event_id": ev["id"], "title": ev["title"], "date": ev["date"], "night": night,
+            "peak": f"{stats['peak'][0]} ({stats['peak'][1]} guests)" if stats["peak"] else None,
+            "baseline": baseline, "compared": len(prev), "change": change}
+
+
+def _pct(v) -> str:
+    return f"+{v}%" if v > 0 else f"{v}%"
+
+
+def trend_line(r: dict) -> str:
+    c = r["change"]
+    if not c:
+        return ""
+    parts = [f"{_pct(c[k])} {label}" for k, label in TREND_METRICS if k in c]
+    return f"{', '.join(parts)} vs your last {r['compared']} night{'s' if r['compared'] > 1 else ''}"
+
+
+def summary_html(ev: dict, r: dict) -> str:
     from html import escape
 
-    peak = f"{s['peak'][0]} ({s['peak'][1]} guests)" if s["peak"] else "—"
-    show = f"{round(100 * s['arrived'] / s['sold'])}%" if s["sold"] else "—"
-    cells = [("Guests in", f"{s['arrived']} of {s['sold']}"), ("Show-up rate", show), ("Peak hour", peak),
-             ("Tables booked", str(s["tables"])), ("Your revenue", f"${s['revenue']:,.2f}"), ("No-shows", str(s["no_shows"]))]
-    rows = "".join(f'<tr><td style="padding:6px 16px 6px 0;color:#666">{k}</td><td style="padding:6px 0;font-weight:bold">{escape(v)}</td></tr>'
-                   for k, v in cells)
+    n, b, c = r["night"], r["baseline"] or {}, r["change"]
+    fmt = {"arrived": lambda v: f"{v} of {n['sold']}" if v is not None else "—", "show_rate": lambda v: f"{v:g}%" if v is not None else "—",
+           "revenue": lambda v: f"${v:,.2f}" if v is not None else "—", "tables": str, "no_shows": str}
+    base_fmt = {"arrived": lambda v: str(v), "show_rate": lambda v: f"{v:g}%" if v is not None else "—",
+                "revenue": lambda v: f"${v:,.2f}", "tables": str, "no_shows": str}
+    labels = [("arrived", "Guests in"), ("show_rate", "Show-up rate"), ("revenue", "Your revenue"), ("tables", "Tables booked"), ("no_shows", "No-shows")]
+    head = ('<tr><td></td><td style="padding:6px 16px 6px 0;color:#666;font-size:12px">Last night</td>'
+            + (f'<td style="padding:6px 16px 6px 0;color:#666;font-size:12px">Last {r["compared"]} avg</td><td></td>' if b else "") + "</tr>")
+    rows = ""
+    for k, label in labels:
+        chg = c.get(k)
+        color = "#15803d" if (chg or 0) > 0 else "#b91c1c" if (chg or 0) < 0 else "#666"
+        rows += (f'<tr><td style="padding:6px 16px 6px 0;color:#666">{label}</td><td style="padding:6px 16px 6px 0;font-weight:bold">{escape(fmt[k](n[k]))}</td>'
+                 + (f'<td style="padding:6px 16px 6px 0">{escape(base_fmt[k](b.get(k)))}</td>'
+                    f'<td style="padding:6px 0;color:{color};font-weight:bold">{_pct(chg) if chg is not None else ""}</td>' if b else "") + "</tr>")
+    peak = f"<p>Peak hour: <strong>{escape(r['peak'])}</strong></p>" if r["peak"] else ""
     return ('<table role="presentation" width="100%"><tr><td style="padding:24px;font-family:Arial,sans-serif;color:#111">'
             f'<h2 style="margin:0 0 12px">Last night at {escape(ev["title"])}</h2>'
-            f'<table role="presentation">{rows}</table>'
+            f'<table role="presentation">{head}{rows}</table>{peak}'
             '<p style="font-size:12px;color:#888;margin-top:24px">Revenue is your share, paid out by Nocturne. '
             "Turn off night summaries under Profile &rarr; Notifications.</p></td></tr></table>")
 
@@ -271,15 +323,17 @@ async def send_night_summaries() -> int:
                                     "summary_sent": {"$ne": True}}, {"_id": 0}):
         if not (await db.events.update_one({"id": ev["id"], "summary_sent": {"$ne": True}}, {"$set": {"summary_sent": True}})).modified_count:
             continue
-        s = await night_stats(ev)
+        r = await night_report(ev)
+        n = r["night"]
         hosts = [h for h in await host_ids(ev) if h]
-        peak = f" · peak {s['peak'][0]}" if s["peak"] else ""
+        peak = f" · peak {r['peak'].split(' (')[0]}" if r["peak"] else ""
+        trend = trend_line(r)
         notify(hosts, f"Last night at {ev['title']} 🌙",
-               f"{s['arrived']}/{s['sold']} guests in{peak} · ${s['revenue']:,.2f} to you · {s['tables']} table{'s' if s['tables'] != 1 else ''}",
+               f"{n['arrived']}/{n['sold']} guests in{peak} · ${n['revenue']:,.2f} to you" + (f" · {trend}" if trend else ""),
                f"/host/event/{ev['id']}", key=f"summary-{ev['id']}", kind="updates")
         async for u in db.users.find({"id": {"$in": hosts}}, {"_id": 0}):
             if u.get("email") and wants(u, "summary"):
-                background(send_email(to=u["email"], subject=f"Night summary: {ev['title']} · {s['arrived']} guests",
-                                      html=summary_html(ev, s)))
+                background(send_email(to=u["email"], subject=f"Night summary: {ev['title']} · {n['arrived']} guests",
+                                      html=summary_html(ev, r)))
         sent += 1
     return sent

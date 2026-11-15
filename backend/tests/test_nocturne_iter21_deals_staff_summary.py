@@ -254,7 +254,10 @@ class TestDoorStaff:
         v, s = setup["v"], setup["staff"]
         url = f"{API}/host/staff"
         assert requests.post(url, json={"venue_id": setup["other"]["id"], "email": s["user"]["email"]}, headers=h(venue)).status_code == 403
-        assert requests.post(url, json={"venue_id": v["id"], "email": f"nobody_{uuid.uuid4().hex[:6]}@x.io"}, headers=h(venue)).status_code == 404
+        # iter22: unknown email now creates a pending invite (201, status=invited)
+        inv = requests.post(url, json={"venue_id": v["id"], "email": f"test_nobody_{uuid.uuid4().hex[:6]}@x.io"}, headers=h(venue))
+        assert inv.status_code == 201 and inv.json()["status"] == "invited" and inv.json()["user_id"] is None, inv.text
+        C["staff"].append(inv.json()["id"])
         assert requests.post(url, json={"venue_id": v["id"], "email": "venue@nocturne.app"}, headers=h(venue)).status_code == 400
         g = login("guest@nocturne.app", "GuestPass123!")
         p = login("promoter@nocturne.app", "PromoterPass123!")
