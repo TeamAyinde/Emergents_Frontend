@@ -94,16 +94,16 @@ class TestPushPrefsAPI:
     def test_defaults_all_true(self, member):
         r = requests.get(f"{API}/me/push-prefs", headers=h(member))
         assert r.status_code == 200, r.text
-        assert r.json() == {"event_night": True, "updates": True, "concierge": True, "sales": True}
+        assert r.json() == {"event_night": True, "updates": True, "concierge": True, "sales": True, "door_rush": True, "table_offers": True}
 
     def test_partial_put_persists(self, member):
         r = requests.put(f"{API}/me/push-prefs", json={"event_night": False}, headers=h(member))
         assert r.status_code == 200, r.text
-        assert r.json() == {"event_night": False, "updates": True, "concierge": True, "sales": True}
+        assert r.json() == {"event_night": False, "updates": True, "concierge": True, "sales": True, "door_rush": True, "table_offers": True}
         r = requests.put(f"{API}/me/push-prefs", json={"concierge": False}, headers=h(member))
-        assert r.json() == {"event_night": False, "updates": True, "concierge": False, "sales": True}
+        assert r.json() == {"event_night": False, "updates": True, "concierge": False, "sales": True, "door_rush": True, "table_offers": True}
         g = requests.get(f"{API}/me/push-prefs", headers=h(member)).json()
-        assert g == {"event_night": False, "updates": True, "concierge": False, "sales": True}
+        assert g == {"event_night": False, "updates": True, "concierge": False, "sales": True, "door_rush": True, "table_offers": True}
         doc = DB.users.find_one({"id": member["user"]["id"]}, {"_id": 0, "push_prefs": 1})
         assert doc["push_prefs"]["event_night"] is False and doc["push_prefs"]["concierge"] is False
 
@@ -117,7 +117,7 @@ class TestPushPrefsAPI:
         assert r.status_code == 422
 
     def test_full_put_restore(self, member):
-        body = {"event_night": True, "updates": True, "concierge": True, "sales": True}
+        body = {"event_night": True, "updates": True, "concierge": True, "sales": True, "door_rush": True, "table_offers": True}
         assert requests.put(f"{API}/me/push-prefs", json=body, headers=h(member)).json() == body
 
 

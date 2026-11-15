@@ -10,11 +10,13 @@ import { colors, radius, spacing } from "@/src/theme";
 
 type Row<K> = { key: K; title: string; sub: string };
 
-const PUSH_ROWS: Row<keyof PushPrefs>[] = [
+const PUSH_ROWS: (Row<keyof PushPrefs> & { hosts?: boolean; sellers?: boolean })[] = [
   { key: "event_night", title: "Event night alerts", sub: "2 hours before doors, ticket ready to scan" },
-  { key: "updates", title: "Guest list & bookings", sub: "Approvals, new requests, tables and reservations" },
+  { key: "table_offers", title: "VIP table offers", sub: "On event day, when tables are still open" },
+  { key: "updates", title: "Guest list & bookings", sub: "Approvals, waitlist spots, tables and reservations" },
   { key: "concierge", title: "Concierge replies", sub: "When your lifestyle manager answers" },
-  { key: "sales", title: "Sales through your link", sub: "The moment someone buys with your code" },
+  { key: "sales", title: "Sales & weekly recap", sub: "Each sale through your code, plus a Monday summary", sellers: true },
+  { key: "door_rush", title: "Door rush", sub: "Live check-in counts on event night", hosts: true },
 ];
 
 const ROWS: Row<keyof EmailPrefs>[] = [
@@ -65,6 +67,7 @@ export default function EmailSettings() {
     onError: () => qc.invalidateQueries({ queryKey: ["push-prefs"] }),
   });
   const sells = user?.role === "promoter" || user?.role === "venue_owner" || user?.role === "admin";
+  const hosts = user?.role === "venue_owner" || user?.role === "admin";
 
   return (
     <View style={styles.root}>
@@ -80,7 +83,7 @@ export default function EmailSettings() {
       ) : (
         <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.sm, paddingBottom: insets.bottom + spacing["2xl"] }}>
           <Text style={styles.section}>Phone alerts</Text>
-          {PUSH_ROWS.filter((r) => r.key !== "sales" || sells).map((r) => (
+          {PUSH_ROWS.filter((r) => (!r.sellers || sells) && (!r.hosts || hosts)).map((r) => (
             <PrefRow key={r.key} id={`push-${r.key}`} title={r.title} sub={r.sub} value={push[r.key]}
               onChange={(v) => savePush.mutate({ ...push, [r.key]: v })} />
           ))}

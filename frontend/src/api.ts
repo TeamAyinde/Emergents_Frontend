@@ -382,7 +382,7 @@ export type Gift = {
   id: string; code: string; level: string; days: number; recipient_email: string | null; note: string | null;
   redeemed: boolean; redeemed_by_name: string | null; email_status?: string | null; created_at: string;
 };
-export type PushPrefs = { event_night: boolean; updates: boolean; concierge: boolean; sales: boolean };
+export type PushPrefs = { event_night: boolean; updates: boolean; concierge: boolean; sales: boolean; door_rush: boolean; table_offers: boolean };
 export type EmailPrefs = { reminders: boolean; receipts: boolean; feedback: boolean; offers: boolean; newsletter: boolean };
 export type HostEarnings = {
   owed: number; paid: number;

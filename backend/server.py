@@ -762,6 +762,10 @@ async def check_in(
     if res.modified_count == 0:
         raise HTTPException(400, "Already checked in")
     t["checked_in"] = True
+    from routes.alerts import bump_checkins, door_rush  # noqa: E402
+    from routes.notify import background  # noqa: E402
+
+    background(door_rush(t["event_id"], t["quantity"], await bump_checkins(t["event_id"], t["quantity"])))
     return TicketOut(**t)
 
 
@@ -978,6 +982,9 @@ async def _startup():
     from routes.push import night_alert_loop  # local
 
     app.state.night_task = asyncio.create_task(night_alert_loop())
+    from routes.alerts import alerts_loop  # local
+
+    app.state.alerts_task = asyncio.create_task(alerts_loop())
 
 
 @app.on_event("shutdown")

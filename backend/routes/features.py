@@ -280,11 +280,16 @@ async def join_event(eid: str, body: JoinIn, user: UserDep):
         return JoinOut(result="ticket", ticket=ticket)
     if not ev.get("approval_required") and not sold_out:
         try:
-            return JoinOut(result="ticket", ticket=await issue_ticket(ev, user, body.quantity, body.promoter_code))
+            ticket = await issue_ticket(ev, user, body.quantity, body.promoter_code)
         except HTTPException as exc:
             if exc.status_code != 409:
                 raise
             sold_out = True
+        else:
+            # a waitlisted guest who grabbed an opened spot: close their request so it can't issue a 2nd ticket
+            await db.event_requests.update_many({"event_id": eid, "user_id": user["id"], "status": "pending"},
+                                                {"$set": {"status": "approved", "ticket_issued": True, "decided_at": _now()}})
+            return JoinOut(result="ticket", ticket=ticket)
     existing = await db.event_requests.find_one({"event_id": eid, "user_id": user["id"], "status": "pending"}, {"_id": 0})
     if existing:
         raise HTTPException(400, "You already have a pending request for this event")
@@ -447,6 +452,10 @@ async def decide_request(rid: str, body: DecisionIn, user: HostDep):
     if not req:
         raise HTTPException(404, "Request not found")
     ev = await _own_event(req["event_id"], user)
+    if body.action == "approve" and await db.tickets.find_one({"event_id": req["event_id"], "user_id": req["user_id"]}, {"_id": 1}):
+        await db.event_requests.update_one({"id": rid, "status": "pending"},
+                                           {"$set": {"status": "approved", "ticket_issued": True, "decided_at": _now()}})
+        raise HTTPException(400, "This guest already has a ticket")
     new_status = "approved" if body.action == "approve" else "declined"
     res = await db.event_requests.update_one({"id": rid, "status": "pending"}, {"$set": {"status": new_status, "decided_at": _now()}})
     if res.modified_count == 0:

@@ -13,6 +13,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import FeatherIcon from "@react-native-vector-icons/feather";
 
 import { api } from "@/src/api";
+import { TableUpsell } from "@/src/table-upsell";
 import { colors, radius, spacing } from "@/src/theme";
 
 export default function TicketScreen() {
@@ -46,6 +47,8 @@ export default function TicketScreen() {
           <Text style={styles.headerTitle}>Your Ticket</Text>
           <View style={{ width: 40 }} />
         </View>
+
+        <TableUpsell ticket={ticket} />
 
         <View style={styles.ticketCard}>
           <View style={styles.cardHead}>

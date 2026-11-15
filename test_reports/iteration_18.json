@@ -1,0 +1,40 @@
+{
+  "summary": "Tested the new alerts: door rush, waitlist spot alerts, VIP table upsell (push + ticket card), weekly promoter recap and the door_rush/table_offers push prefs. Backend: 11/11 pytest pass (tests/test_nocturne_iter19_alerts.py, run in-process with send_push monkeypatched). Door rush fires 'first' and then at each 25/50 mark, goes to venue owner + event creator, skips muted hosts, and check-in over HTTP stays fast (<3s, 200, repeat check-in gives 400). Waitlist push goes only to fitting party sizes, skips approval/past events and guests who already hold a ticket, and sends once. Table offers go only in the 2-10h window, only when an open table matches the guest's level and the guest has no booked table, and send once; the message says 'N table(s) left from $X'. Promoter recap: force=True reaches every promoter with correct guests/earnings/rank text; without force it is gated to Monday 16:00 UTC or later and runs once per ISO week (DuplicateKeyError guard works). Frontend (375x667): the 'Make it a VIP night' card (table-upsell) shows only for an event within 12h that has open tables at the guest's level. It stays hidden when the event is 20h away, when the guest has a booked table, or when only gold tables exist (guest is bronze). Tapping it opens /event/{id}. Phone alert rows are right for each role: guest gets event_night/updates/concierge/table_offers; promoter adds sales; venue/admin add sales and door_rush. Toggles save through PUT. No deprecated Expo packages in the files touched.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "routes/alerts.py door_rush", "issue": "Race: the running total is read by aggregate in a background task after check-in. If two check-ins happen at almost the same time, both tasks can read the same total, so the 'first' alert or a 25-guest alert can be missed (e.g. both see total=2, so prev=1 for each and 'first' never fires). Fix: keep a counter with $inc via find_one_and_update(return_document=AFTER) on the event and work out the crossing from the returned value."},
+      {"endpoint": "send_waitlist_spots + POST /api/events/{eid}/join", "issue": "After the spot alert, the guest taps it and rejoins. join_event issues the ticket directly but never closes the guest's pending waitlist request, so the host still sees it. If the host then approves it, issue_ticket(override=True) runs again and there is no per-user duplicate guard (code review, not run), so the guest gets a second ticket and capacity grows. Close/mark the pending request when a ticket is issued in join_event, and/or guard issue_ticket against an existing ticket for that user and event."},
+      {"endpoint": "send_waitlist_spots", "issue": "Design note: when one spot opens, every waitlisted party that fits is alerted at the same time, and each request is alerted only once ever. A guest who misses a freed spot is never told again."},
+      {"endpoint": "services/seed.py:271", "issue": "Pre-existing, found while testing: on every backend start/reload, events.min_level is overwritten with the venue's min_level for all events at that venue. Any per-event min_level set through POST /events body.min_level is lost after a restart. (WatchFiles reloads the backend even when files under backend/tests change.)"}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/ticket/[id]", "issues": ["On a 375x667 screen the table-upsell card sits below the fold (y=646), so guests must scroll to find it. Consider placing it above the ticket details or under the QR code."]},
+      {"screen": "/event/[id] (from upsell)", "issues": ["Tapping the upsell opens the top of the event page. The 'Tables & VIP' section is below the fold, behind the sticky 'You're going' button. Consider deep-linking or scrolling straight to the table map (e.g. /event/{id}?tables=1)."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_nocturne_iter19_alerts.py", "/app/backend/tests/iter19_ui_seed.py", "/app/test_reports/pytest/pytest_iter19.xml"],
+  "action_items": [
+    "Make door_rush race-safe: use an atomic $inc counter on the event instead of the aggregate taken after the fact.",
+    "Close the guest's pending waitlist/approval request when join_event issues a ticket, and add a duplicate-ticket guard (per user and event) in issue_ticket or the approve path.",
+    "Optional UX: move the table-upsell card higher on the ticket screen and deep-link to the table map.",
+    "Optional: stop services/seed.py from overwriting per-event min_level on every startup."
+  ],
+  "critical_code_review_comments": [
+    "table-upsell.tsx: the constant DAY_MS is actually 12h (naming nit). The UI window (0-12h) is wider than the push window (2-10h), which is fine.",
+    "send_promoter_recap claims the week before sending. If the relay fails, that week's recap is lost (acceptable, but worth a note).",
+    "Uses notify() fire-and-forget with idempotency keys, which is good. The check-in endpoint schedules door_rush through background() and is not slowed down."
+  ],
+  "updated_files": ["/app/backend/tests/test_nocturne_iter19_alerts.py (new)", "/app/backend/tests/iter19_ui_seed.py (new, seed/clean helper for UI check)"],
+  "success_rate": {"backend": "100% (11/11)", "frontend": "100% (upsell show/hide 4/4, tap navigation, role-based pref rows 4/4, toggle save)"},
+  "seed_data_creation": "TEST_ users/events/tickets/requests/bookings created and deleted by id. For the UI check, 4 TEST_ Upsell events + 4 tickets for guest@nocturne.app + 1 table booking were created and removed (verified 0 left). settings._id=promoter_recap did not exist before and was removed after the test. Side effect: guest@nocturne.app push_prefs now stores all 6 keys = true; it previously had 4 keys = true, which behaves the same.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: cd /app/backend && python -m pytest tests/test_nocturne_iter19_alerts.py -n 0. The fake-Monday test uses 2020-01-06 and restores the settings doc. For UI upsell: python tests/iter19_ui_seed.py seed / clean (it writes the state file to /tmp). Note: a backend reload resets the seeded events' min_level to the venue's (Club Noire=gold); set them back to bronze in the DB if needed.",
+  "rca_of_issue": ""
+}

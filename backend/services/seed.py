@@ -268,7 +268,7 @@ async def _apply_levels(db):
         await db.venues.update_one({"name": name}, {"$set": {"min_level": lvl}})
     await db.venues.update_many({"min_level": {"$exists": False}}, {"$set": {"min_level": "bronze"}})
     async for v in db.venues.find({}, {"_id": 0, "id": 1, "min_level": 1}):
-        await db.events.update_many({"venue_id": v["id"]}, {"$set": {"min_level": v["min_level"]}})
+        await db.events.update_many({"venue_id": v["id"], "min_level": {"$exists": False}}, {"$set": {"min_level": v["min_level"]}})
     await db.users.update_many({"level": {"$exists": False}}, {"$set": {"level": "bronze"}})
 
 

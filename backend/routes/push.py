@@ -100,14 +100,16 @@ async def venue_owner(venue_id: Optional[str]) -> Optional[str]:
 
 # ---------- Push preferences ----------
 
-PUSH_KEYS = ("event_night", "updates", "concierge", "sales")
+PUSH_KEYS = ("event_night", "updates", "concierge", "sales", "door_rush", "table_offers")
 
 
 class PushPrefs(BaseModel):
     event_night: bool = True  # 2 hours before doors open
-    updates: bool = True  # guest list decisions, new requests, bookings, reservations
+    updates: bool = True  # guest list decisions, waitlist spots, new requests, bookings, reservations
     concierge: bool = True  # concierge replies
-    sales: bool = True  # promoters: someone bought through your link
+    sales: bool = True  # promoters: someone bought through your link + weekly recap
+    door_rush: bool = True  # hosts: live check-in milestones
+    table_offers: bool = True  # event-day VIP table offers
 
 
 class PushPrefsIn(BaseModel):
@@ -115,6 +117,8 @@ class PushPrefsIn(BaseModel):
     updates: Optional[bool] = None
     concierge: Optional[bool] = None
     sales: Optional[bool] = None
+    door_rush: Optional[bool] = None
+    table_offers: Optional[bool] = None
 
 
 @router.get("/me/push-prefs", response_model=PushPrefs)
