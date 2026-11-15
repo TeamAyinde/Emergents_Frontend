@@ -104,6 +104,8 @@ async def deal_leaderboard(user: HostDep):
     levels: dict = {}
     async for ev in db.events.find({**await _host_event_filter(user), "deal": {"$exists": True}}, {"_id": 0}):
         d = await _deal(ev)
+        if not d.expired and _aware(ev["date"]) > datetime.now(timezone.utc):
+            continue  # still running — would count as 0 buyers and skew the ranking
         row = levels.setdefault(d.pct, {"pct": d.pct, "deals": 0, "sent_to": 0, "buyers": 0, "tickets": 0, "revenue": 0.0})
         row["deals"] += 1
         row["sent_to"] += d.sent_to
@@ -179,9 +181,14 @@ REPORT_DAY_HOUR_UTC = 16  # 1st of the month
 
 
 def _month_bounds(d: datetime) -> tuple[datetime, datetime]:
-    start = d.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    end = (start + timedelta(days=32)).replace(day=1)
-    return start, end
+    """Calendar month in venue (California) time, returned as UTC instants."""
+    from routes.alerts import VENUE_TZ  # noqa: E402
+
+    local = (d if d.tzinfo else d.replace(tzinfo=timezone.utc)).astimezone(VENUE_TZ)
+    start = datetime(local.year, local.month, 1, tzinfo=VENUE_TZ)
+    nxt = start + timedelta(days=32)
+    end = datetime(nxt.year, nxt.month, 1, tzinfo=VENUE_TZ)
+    return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
 
 
 async def venue_month(venue_id: str, start: datetime, end: datetime) -> dict:
@@ -205,6 +212,12 @@ async def venue_month(venue_id: str, start: datetime, end: datetime) -> dict:
             "rating": round(fb[0]["avg"], 2) if fb else None, "ratings": fb[0]["n"] if fb else 0}
 
 
+def _local(d: datetime) -> datetime:
+    from routes.alerts import VENUE_TZ  # noqa: E402
+
+    return d.astimezone(VENUE_TZ)
+
+
 def _chg(now, before) -> Optional[int]:
     return round(100 * (now - before) / before) if now is not None and before else None
 
@@ -214,7 +227,7 @@ async def venue_report(venue: dict, month_start: datetime) -> dict:
     cur = await venue_month(venue["id"], *_month_bounds(month_start))
     prev = await venue_month(venue["id"], prev_start, month_start)
     change = {k: _chg(cur[k], prev[k]) for k in ("arrived", "revenue", "show_rate", "rating")}
-    return {"venue_id": venue["id"], "venue_name": venue["name"], "month": month_start.strftime("%B %Y"),
+    return {"venue_id": venue["id"], "venue_name": venue["name"], "month": _local(month_start).strftime("%B %Y"),
             "current": cur, "previous": prev, "change": {k: v for k, v in change.items() if v is not None}}
 
 
@@ -260,7 +273,7 @@ async def send_monthly_reports(force_month: Optional[datetime] = None) -> int:
         if now.day != 1 or now.hour < REPORT_DAY_HOUR_UTC:
             return 0
         month_start, _ = _month_bounds(now - timedelta(days=1))
-        key = month_start.strftime("%Y-%m")
+        key = _local(month_start).strftime("%Y-%m")
         try:
             await db.settings.update_one({"_id": "venue_report", "month": {"$ne": key}}, {"$set": {"month": key}}, upsert=True)
         except DuplicateKeyError:
@@ -279,7 +292,7 @@ async def send_monthly_reports(force_month: Optional[datetime] = None) -> int:
         guests = sum(r["current"]["arrived"] for r in reports)
         revenue = sum(r["current"]["revenue"] for r in reports)
         notify([owner_id], f"Your {reports[0]['month']} report 📊", f"{guests} guests · ${revenue:,.2f} across {len(venues)} venue{'s' if len(venues) > 1 else ''}. Tap for trends.",
-               "/host", key=f"report-{month_start:%Y-%m}-{owner_id}", kind="updates")
+               "/host", key=f"report-{_local(month_start):%Y-%m}-{owner_id}", kind="updates")
         if owner.get("email") and wants(owner, "monthly"):
             background(send_email(to=owner["email"], subject=f"Your {reports[0]['month']} venue report",
                                   html=report_html(owner.get("full_name") or "there", reports)))
@@ -300,9 +313,51 @@ class MonthReport(BaseModel):
 async def my_report(user: HostDep, month: Optional[str] = None):
     """In-app copy of the monthly report. `month` = YYYY-MM (default: current month so far)."""
     try:
-        d = datetime.strptime(month, "%Y-%m").replace(tzinfo=timezone.utc) if month else datetime.now(timezone.utc)
+        d = datetime.strptime(month, "%Y-%m").replace(day=15, tzinfo=timezone.utc) if month else datetime.now(timezone.utc)
     except ValueError:
         raise HTTPException(400, "Month must look like 2026-05")
     start, _ = _month_bounds(d)
     filt = {} if user["role"] == "admin" else {"owner_id": user["id"]}
     return [MonthReport(**await venue_report(v, start)) async for v in db.venues.find(filt, {"_id": 0, "id": 1, "name": 1})]
+
+
+@router.get("/host/report.csv")
+async def my_report_csv(user: HostDep, month: Optional[str] = None):
+    """Spreadsheet of a month for accounting: one row per event, then a total row per venue."""
+    import csv
+    import io
+
+    from fastapi.responses import Response
+
+    from routes.alerts import VENUE_TZ, night_stats  # noqa: E402
+
+    try:
+        d = datetime.strptime(month, "%Y-%m").replace(day=15, tzinfo=timezone.utc) if month else datetime.now(timezone.utc)
+    except ValueError:
+        raise HTTPException(400, "Month must look like 2026-05")
+    start, end = _month_bounds(d)
+    held_until = min(end, datetime.now(timezone.utc))
+
+    def safe(v):  # stop spreadsheet apps from running titles like "=HYPERLINK(...)" as formulas
+        return f"'{v}" if isinstance(v, str) and v[:1] in ("=", "+", "-", "@", "\t", "\r") else v
+
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["Month", "Venue", "Date", "Event", "Tickets sold", "Guests in", "Show-up %", "No-shows", "Tables booked",
+                "Ticket & table revenue (USD)", "Avg rating", "Ratings"])
+    filt = {} if user["role"] == "admin" else {"owner_id": user["id"]}
+    label = start.astimezone(VENUE_TZ).strftime("%Y-%m")
+    async for v in db.venues.find(filt, {"_id": 0, "id": 1, "name": 1}).sort("name", 1):
+        async for ev in db.events.find({"venue_id": v["id"], "date": {"$gte": start, "$lt": held_until}}, {"_id": 0}).sort("date", 1):
+            s = await night_stats(ev)
+            fb = await db.feedback.aggregate([{"$match": {"event_id": ev["id"]}},
+                                              {"$group": {"_id": None, "avg": {"$avg": "$rating"}, "n": {"$sum": 1}}}]).to_list(1)
+            w.writerow([label, safe(v["name"]), _aware(ev["date"]).astimezone(VENUE_TZ).strftime("%Y-%m-%d %H:%M"), safe(ev["title"]),
+                        s["sold"], s["arrived"], round(100 * s["arrived"] / s["sold"], 1) if s["sold"] else "",
+                        s["no_shows"], s["tables"], f"{s['revenue']:.2f}", round(fb[0]["avg"], 2) if fb else "", fb[0]["n"] if fb else 0])
+        m = await venue_month(v["id"], start, end)
+        w.writerow([label, safe(v["name"]), "TOTAL", f"{m['events']} events held so far (revenue incl. reservations)", m["sold"], m["arrived"],
+                    m["show_rate"] if m["show_rate"] is not None else "", max(0, m["sold"] - m["arrived"]), "",
+                    f"{m['revenue']:.2f}", m["rating"] if m["rating"] is not None else "", m["ratings"]])
+    return Response(buf.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="nocturne-report-{label}.csv"'})

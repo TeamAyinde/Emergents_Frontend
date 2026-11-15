@@ -1,7 +1,10 @@
-import { useQuery } from "@tanstack/react-query";
-import { StyleSheet, Text, View } from "react-native";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
+import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import FeatherIcon from "@react-native-vector-icons/feather";
 
 import { api, MonthStats } from "./api";
+import { saveCsv } from "./share-file";
 import { colors, radius, spacing } from "./theme";
 
 /** Host Studio: which discount levels converted best across all past deals. */
@@ -46,9 +49,23 @@ function fmt(k: string, v: number | null) {
   return String(v);
 }
 
-/** Host Studio: this month so far vs last month, per venue. */
+/** Host Studio: this month so far vs last month, per venue, plus spreadsheet downloads for accounting. */
 export function MonthReportCard() {
   const { data } = useQuery({ queryKey: ["host-report"], queryFn: () => api.hostReport() });
+  const months = useMemo(() => {
+    const now = new Date();
+    return Array.from({ length: 6 }, (_, i) => {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      return { key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`, label: d.toLocaleString("en", { month: "short" }) };
+    });
+  }, []);
+  const [month, setMonth] = useState(months[0].key);
+  const [msg, setMsg] = useState("");
+  const download = useMutation({
+    mutationFn: async () => saveCsv(await api.hostReportCsv(month), `nocturne-report-${month}.csv`),
+    onSuccess: () => setMsg(Platform.OS === "web" ? "Spreadsheet downloaded." : ""),
+    onError: (e: Error) => setMsg(e.message),
+  });
   if (!data || data.length === 0) return null;
   return (
     <View style={styles.card} testID="month-report">
@@ -73,11 +90,32 @@ export function MonthReportCard() {
           </View>
         </View>
       ))}
+      <Text style={[styles.sub, { marginTop: spacing.md }]}>Download for your accountant</Text>
+      <View style={styles.months}>
+        {months.map((m) => (
+          <Pressable key={m.key} testID={`report-month-${m.key}`} onPress={() => { setMonth(m.key); setMsg(""); }} style={[styles.chip, month === m.key && styles.chipOn]}>
+            <Text style={[styles.chipText, month === m.key && styles.chipTextOn]}>{m.label}</Text>
+          </Pressable>
+        ))}
+      </View>
+      <Pressable testID="report-download-btn" disabled={download.isPending} onPress={() => { setMsg(""); download.mutate(); }}
+        style={[styles.dl, download.isPending && { opacity: 0.6 }]}>
+        {download.isPending ? <ActivityIndicator color={colors.onBrandPrimary} /> : <FeatherIcon name="download" size={16} color={colors.onBrandPrimary} />}
+        <Text style={styles.dlText}>Download spreadsheet</Text>
+      </Pressable>
+      {msg ? <Text style={[styles.sub, download.isError && { color: colors.error }]} testID="report-download-msg">{msg}</Text> : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  months: { flexDirection: "row", gap: spacing.xs, flexWrap: "wrap" },
+  chip: { minWidth: 48, height: 44, paddingHorizontal: spacing.md, borderRadius: radius.pill, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.borderStrong },
+  chipOn: { borderColor: colors.brandPrimary, backgroundColor: colors.brandTertiary },
+  chipText: { color: colors.muted, fontWeight: "700", fontSize: 13 },
+  chipTextOn: { color: colors.brandPrimary },
+  dl: { flexDirection: "row", gap: spacing.sm, height: 48, borderRadius: radius.pill, alignItems: "center", justifyContent: "center", backgroundColor: colors.brandPrimary, marginTop: spacing.sm },
+  dlText: { color: colors.onBrandPrimary, fontWeight: "800", fontSize: 15 },
   card: { backgroundColor: colors.surfaceSecondary, borderRadius: radius.lg, padding: spacing.lg, gap: spacing.xs, borderWidth: 1, borderColor: colors.border },
   title: { color: colors.onSurface, fontSize: 17, fontWeight: "800" },
   sub: { color: colors.muted, fontSize: 12 },

@@ -1,0 +1,41 @@
+{
+  "summary": "Iteration 24: Best Deal Tip + Report Downloads. Backend: 14/14 pytest pass (report.csv auth 401/403, bad month 400 x4, default month, headers text/csv + Content-Disposition attachment filename nocturne-report-YYYY-MM.csv, exact header row, per-event rows sorted by date with LA-time dates, out-of-month event excluded, CSV quoting of commas/quotes in titles, TOTAL row == GET /api/host/report current figures (events/sold/arrived/show_rate/no-shows/revenue/rating/ratings), owner isolation (another TEST_ owner's venue hidden), admin sees all venues each with a TOTAL row; deal leaderboard sort + owner isolation + guest 403). Frontend (390x844): DealCard tip verified for all three states. Two levels: 'Tip: 30% off sells best for you — 100% of waitlisted guests bought ($120 so far).' and only deal-best-30 shows '★ Best'. One level: 'Tip: you've only tried 20% off (25% bought). Try another level to compare.' with no Best tag. No deals: no tip. Sending a deal hides the tip and shows deal-sent. Host Studio MonthReportCard: 6 month chips (report-month-2026-11..2026-06, chips 44px tall), the report-download-btn (48px) download event fired with nocturne-report-2026-11.csv holding real CSV content; picking the Sep chip downloaded nocturne-report-2026-09.csv; report-download-msg shows 'Spreadsheet downloaded.'. The native expo-file-system/expo-sharing path cannot be checked on web; the code uses the SDK 58 File/Paths API correctly. No deprecated Expo packages detected. All TEST_ data was removed by id: 0 deals, events, venues, waitlist requests or tickets left.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/host/report.csv", "issue": "Month bounds are in UTC but dates print in America/Los_Angeles. An event on Dec 1 05:00 UTC (Nov 30 9pm LA) lands in the December sheet with date 2025-11-30, and the other way round at month start. /host/report uses the same UTC bounds, so the two agree, but an accountant sees out-of-month dates. Consider LA-local month bounds in _month_bounds/venue_month/report.csv. Reference: /app/backend/routes/venueops.py:181,325,333"},
+      {"endpoint": "GET /api/host/report.csv", "issue": "For the current month, per-event rows include upcoming events, while TOTAL counts only nights already held. Revenue also differs: event rows add up payables per event at any time, while TOTAL adds up payables created in the month. So the event rows don't add up to TOTAL, even though the label explains it. Consider marking upcoming rows (e.g. a 'Status' column) or leaving them out. Reference: venueops.py:333-343"},
+      {"endpoint": "GET /api/host/report.csv", "issue": "CSV/formula injection: event titles and venue names are written raw. A title starting with = + - @ runs as a formula in Excel or Sheets. Prefix such cells with a single quote. Reference: venueops.py:337"},
+      {"endpoint": "GET /api/host/deals/leaderboard", "issue": "Active (not yet expired) deals count right away with 0 buyers, so a deal sent minutes ago drags its level's conversion down and can change the DealCard 'best' tip. Consider counting only expired deals, or events in the past. Reference: venueops.py:105"}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "MonthReportCard", "issue": "The report-download-msg 'Spreadsheet downloaded.' stays visible after picking another month chip, so it looks like that month was already downloaded. Clear msg in the chip onPress. Reference: /app/frontend/src/host-insights.tsx:96", "testID": "report-download-msg", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/host/event/{id} DealCard", "issues": ["The ★ Best button is 52px tall while the others are 44px, and the row is top-aligned, so the best button sticks out 8px below its neighbours. Add alignItems:'center' to the row or keep the height and use only the border. Reference: deal-card.tsx:77,123"]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_nocturne_iter24_report_csv_deal_tip.py", "/app/backend/tests/iter24_ui_seed.py", "/app/test_reports/pytest/pytest_iter24.xml"],
+  "action_items": [
+    "Optional: use LA-local month bounds for report.csv and /host/report so dates and month match",
+    "Optional: mark or leave out upcoming events in current-month CSV rows so the rows add up to TOTAL",
+    "Optional: escape cells starting with = + - @ in the CSV (formula injection)",
+    "Optional: count only expired deals in /host/deals/leaderboard",
+    "Clear report-download-msg when the month chip changes; centre-align the DealCard discount row"
+  ],
+  "critical_code_review_comments": [
+    "share-file.ts web path calls URL.revokeObjectURL right after link.click() and never adds the anchor to the DOM. This works in Chromium (verified). Older Safari/Firefox can need the anchor added to the page and the revoke delayed (setTimeout).",
+    "api.hostReportCsv throws a generic 'Couldn't build the spreadsheet' and drops the backend error detail. This is acceptable."
+  ],
+  "updated_files": ["/app/backend/tests/test_nocturne_iter24_report_csv_deal_tip.py", "/app/backend/tests/iter24_ui_seed.py"],
+  "success_rate": {"backend": "100% (14/14)", "frontend": "100% (tip 2-level/1-level/none, Best tag, send deal, month chips, 2 CSV downloads + message)"},
+  "seed_data_creation": "TEST_ venues/events/tickets/payables/feedback/table bookings/waitlist requests/one TEST_ venue_owner user were created by pytest and iter24_ui_seed.py (seed two|one|none / clean). All were deleted by id. Verified 0 deals and 0 TEST_ events, venues, requests or tickets remain.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Container clock is Nov 2026. Run: pytest tests/test_nocturne_iter24_report_csv_deal_tip.py -n 0. UI: python tests/iter24_ui_seed.py seed two|one|none prints the upcoming event id, then open /host/event/{id}. Log in through the UI at /sign-in (setting nocturne_token in localStorage before navigating did not authenticate). Clean up with 'python tests/iter24_ui_seed.py clean'.",
+  "rca_of_issue": ""
+}

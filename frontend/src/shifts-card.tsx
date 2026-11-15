@@ -32,7 +32,7 @@ export function ShiftsCard({ eventId }: { eventId: string }) {
   return (
     <View style={styles.card} testID="shifts-card">
       <Text style={styles.title}>Door team tonight</Text>
-      <Text style={styles.sub}>Staff only see and scan the nights they're on.</Text>
+      <Text style={styles.sub}>Staff only see and scan the nights they&apos;re on.</Text>
       {data.map((s) => (
         <View key={s.staff_id} style={styles.row} testID={`shift-row-${s.staff_id}`}>
           <View style={{ flex: 1 }}>

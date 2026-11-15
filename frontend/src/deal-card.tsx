@@ -19,12 +19,18 @@ export function DealCard({ eventId, spotsLeft, upcoming }: { eventId: string; sp
   const qc = useQueryClient();
   const [hours, setHours] = useState(2);
   const { data: live } = useQuery({ queryKey: ["host-live", eventId], queryFn: () => api.hostLive(eventId), refetchInterval: 15000 });
+  const { data: board } = useQuery({ queryKey: ["deal-leaderboard"], queryFn: api.dealLeaderboard, enabled: upcoming });
   const send = useMutation({
     mutationFn: (pct: number) => api.sendDeal(eventId, pct, hours),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["host-live", eventId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["host-live", eventId] });
+      qc.invalidateQueries({ queryKey: ["deal-leaderboard"] });
+    },
   });
   if (!live || (!upcoming && !live.deal)) return null;
   const d = live.deal;
+  const tried = (board ?? []).filter((b) => b.sent_to > 0);
+  const best = tried[0]; // leaderboard is sorted by conversion, then revenue
 
   return (
     <View style={styles.card} testID="deal-card">
@@ -59,12 +65,25 @@ export function DealCard({ eventId, spotsLeft, upcoming }: { eventId: string; sp
             ))}
           </View>
           <Text style={styles.label}>Discount</Text>
+          {best ? (
+            <View style={styles.tip} testID="deal-tip">
+              <Text style={styles.tipText}>
+                {tried.length > 1
+                  ? `Tip: ${best.pct}% off sells best for you — ${best.conversion}% of waitlisted guests bought ($${best.revenue.toLocaleString("en", { maximumFractionDigits: 0 })} so far).`
+                  : `Tip: you've only tried ${best.pct}% off (${best.conversion}% bought). Try another level to compare.`}
+              </Text>
+            </View>
+          ) : null}
           <View style={styles.row}>
-            {PCTS.map((p) => (
-              <Pressable key={p} testID={`deal-${p}`} disabled={send.isPending} onPress={() => send.mutate(p)} style={styles.btn}>
-                <Text style={styles.btnText}>{p}% off</Text>
-              </Pressable>
-            ))}
+            {PCTS.map((p) => {
+              const top = tried.length > 1 && best?.pct === p;
+              return (
+                <Pressable key={p} testID={`deal-${p}`} disabled={send.isPending} onPress={() => send.mutate(p)} style={[styles.btn, top && styles.btnBest]}>
+                  <Text style={styles.btnText}>{p}% off</Text>
+                  {top ? <Text style={styles.bestTag} testID={`deal-best-${p}`}>★ Best</Text> : null}
+                </Pressable>
+              );
+            })}
           </View>
           {send.error ? <Text style={styles.err}>{send.error.message}</Text> : null}
         </>
@@ -101,5 +120,9 @@ const styles = StyleSheet.create({
   chipTextOn: { color: colors.brandPrimary },
   btn: { flex: 1, height: 44, borderRadius: radius.pill, alignItems: "center", justifyContent: "center", backgroundColor: colors.brandPrimary },
   btnText: { color: colors.onBrandPrimary, fontWeight: "800", fontSize: 13 },
+  btnBest: { borderWidth: 2, borderColor: colors.onSurface },
+  bestTag: { color: colors.onBrandPrimary, fontSize: 9, fontWeight: "800", lineHeight: 11 },
+  tip: { padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.brandTertiary },
+  tipText: { color: colors.brandPrimary, fontSize: 13, fontWeight: "700" },
   err: { color: colors.error, fontSize: 13 },
 });

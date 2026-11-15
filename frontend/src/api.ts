@@ -365,6 +365,12 @@ export const api = {
     if (!res.ok) throw new Error("Export failed");
     return res.text();
   },
+  hostReportCsv: async (month: string) => {
+    const token = await tokenStore.getItem();
+    const res = await fetch(`${API_BASE}/host/report.csv?month=${month}`, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) throw new Error("Couldn't build the spreadsheet");
+    return res.text();
+  },
   streamDraft: async (topic: string, category: string, onChunk: (full: string) => void) => {
     const token = await tokenStore.getItem();
     const res = await expoFetch(`${API_BASE}/admin/journal/draft`, {
