@@ -64,7 +64,7 @@ export default function PayoutSettings() {
             />
             <Text style={styles.title}>
               {state === "ready" ? "Your bank is linked" : state === "incomplete" ? "Finish your Stripe setup"
-                : state === "unavailable" ? "Coming soon" : "Get paid automatically"}
+                : state === "unavailable" ? "Payouts sent by our team" : "Get paid automatically"}
             </Text>
             <Text style={styles.text}>
               {state === "ready"

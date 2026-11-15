@@ -1,0 +1,37 @@
+{
+  "summary": "Iteration 25: Store name fix, Privacy/Support pages and Report a Problem. Backend: 12/12 pytest passed (tests/test_nocturne_iter25_support_privacy.py, -n 0). Covered: public /api/legal/privacy and /api/legal/support (200 text/html, all required sections, the FAQ links to /api/legal/privacy); POST /api/support/reports (201 for all 6 categories, message trimmed, user name/email filled in, no _id; 422 for a bad category, a message under 5 or over 2000 chars, or context over 80 chars; 401 without auth; 429 on the 11th report in the same hour); /mine returns only the caller's own reports; admin list with open/resolved/all filters; PUT to resolve and reopen (resolved_at set, then cleared); non-admin gets 403, unknown id gets 404, a bad status gets 422. Push was tested in-process with send_push monkeypatched: admins get exactly one push (key report-<id>, url /admin/reports) and the member gets one on resolve (key report-done-<id>, url /support). app.json name is 'Nocturne' with slug 'frontend' unchanged. payout-settings shows 'Payouts sent by our team' and no 'Coming soon'. Frontend (390x844): all flows passed with no page errors. Sign-up legal line and both links open the hosted pages in a new tab. On Profile, 'Help & support' goes to /support and 'Privacy policy' opens the privacy page. On /support: Send is disabled for empty or 4-char input, the category chip selects, submit shows report-sent and clears the input, and 'Your reports' shows the report with an OPEN pill. Both external links open correctly. The concierge flag button opens /support?context=concierge with 'Concierge chat' preselected, the report is saved with context 'concierge', and back returns to /concierge. Admin: 'Problem reports' row goes to /admin/reports, cards show category, context, user and date, and Mark resolved / Reopen moves cards between the Open and Resolved tabs. The member then sees status resolved. Only minor issues found. Deprecated packages detected: none (no expo-av, expo-barcode-scanner or expo-background-fetch).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/support/reports", "issue": "min_length=5 is checked on the raw message before .strip(). A message of 6 spaces (or '    a') passes validation and is saved as '' or 'a'. Validate the trimmed length, e.g. with a field_validator that strips first and then checks len >= 5. The UI trims, so only direct API callers are affected."},
+      {"endpoint": "POST /api/support/reports", "issue": "The rate-limit window starts at the top of the clock hour, not a rolling 60 minutes. A user can send 10 at 10:59 and 10 more at 11:00. Acceptable, but use now - 1h if a rolling limit is intended."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "admin/index", "issues": ["The 'Problem reports' row (admin-reports-btn) is only 37px tall, under the 44px minimum. The shared listRow style uses paddingVertical: spacing.sm; add minHeight: 44 (this affects all admin list rows)."]},
+      {"screen": "(auth)/sign-up", "issues": ["signup-privacy-link and signup-support-link are inline Text links about 16px tall, which is a small touch target. Consider adding hitSlop (not supported on Text) or padding them as Pressable links."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_nocturne_iter25_support_privacy.py", "/app/test_reports/pytest/pytest_iter25.xml"],
+  "action_items": [
+    "(minor) In support.py ReportIn, validate the stripped message length so whitespace-only or short padded messages get 422.",
+    "(minor) Add minHeight: 44 to listRow in app/admin/index.tsx.",
+    "(optional) Make the rate limit a rolling 60-minute window if intended."
+  ],
+  "critical_code_review_comments": [
+    "support.tsx: useLocalSearchParams context may be string | string[]. It is passed straight to the API as context, and an array would give 422. This is low risk because only the concierge link sets it.",
+    "Privacy page 'Last updated' is a hard-coded constant (UPDATED='June 2026'). Remember to bump it when the policy changes.",
+    "support.py notify() is fire-and-forget and does not block the request, which is correct. Admin pushes honour push_prefs.updates opt-out."
+  ],
+  "updated_files": ["/app/backend/tests/test_nocturne_iter25_support_privacy.py"],
+  "success_rate": {"backend": "100% (12/12)", "frontend": "100% (all requested flows)"},
+  "seed_data_creation": "TEST_ users (test_i25_*, test_i25ui_*) and their support_reports were created and then deleted by id. support_reports is back to 0 docs and seeded accounts were untouched.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: cd /app/backend && python -m pytest tests/test_nocturne_iter25_support_privacy.py -n 0. Push is tested in-process by patching routes.push.send_push and draining push._tasks via conftest.run. The system clock is Nov 2026.",
+  "rca_of_issue": ""
+}

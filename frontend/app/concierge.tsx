@@ -26,6 +26,10 @@ export default function Concierge() {
             {lvl === "gold" ? "Gold priority line" : `${LEVEL_INFO[lvl].label} member · Gold members are answered first`}
           </Text>
         </View>
+        <Pressable testID="concierge-report" onPress={() => router.push("/support?context=concierge")} style={styles.iconBtn}
+          accessibilityLabel="Report a problem">
+          <FeatherIcon name="flag" size={18} color={colors.muted} />
+        </Pressable>
       </View>
       <ChatView
         load={api.conciergeMessages}

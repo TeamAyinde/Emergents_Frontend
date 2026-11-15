@@ -978,6 +978,7 @@ from routes.push import router as push_router  # noqa: E402
 from routes.hostlive import router as hostlive_router  # noqa: E402
 from routes.staff import router as staff_router  # noqa: E402
 from routes.venueops import router as venueops_router  # noqa: E402
+from routes.support import router as support_router  # noqa: E402
 
 app.include_router(api)
 app.include_router(extras_router)
@@ -992,6 +993,7 @@ app.include_router(push_router)
 app.include_router(hostlive_router)
 app.include_router(staff_router)
 app.include_router(venueops_router)
+app.include_router(support_router)
 
 app.add_middleware(
     CORSMiddleware,

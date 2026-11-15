@@ -221,6 +221,12 @@ export const api = {
     request<DoorStaff>("/host/staff", { method: "POST", body: JSON.stringify({ venue_id, email }) }),
   removeDoorStaff: (id: string) => request<{ ok: boolean }>(`/host/staff/${id}`, { method: "DELETE" }),
   doorDuty: () => request<DoorDuty>("/staff/duty"),
+  sendReport: (body: { category: ReportCategory; message: string; context?: string }) =>
+    request<SupportReport>("/support/reports", { method: "POST", body: JSON.stringify(body) }),
+  myReports: () => request<SupportReport[]>("/support/reports/mine"),
+  adminReports: (status: "open" | "resolved" | "all") => request<SupportReport[]>(`/admin/reports?status=${status}`),
+  setReportStatus: (id: string, status: "open" | "resolved") =>
+    request<SupportReport>(`/admin/reports/${id}`, { method: "PUT", body: JSON.stringify({ status }) }),
   searchGuests: (eid: string, q: string) => request<GuestHit[]>(`/host/events/${eid}/guests?q=${encodeURIComponent(q)}`),
   eventSummary: (eid: string) => request<NightSummary>(`/host/events/${eid}/summary`),
   eventShifts: (eid: string) => request<ShiftStaff[]>(`/host/events/${eid}/shifts`),
@@ -429,6 +435,11 @@ export type NightTotals = { sold: number; arrived: number; no_shows: number; tab
 export type NightSummary = {
   event_id: string; title: string; date: string; night: NightTotals; peak: string | null;
   baseline: NightTotals | null; compared: number; change: Partial<Record<"arrived" | "revenue" | "show_rate", number>>;
+};
+export type ReportCategory = "bug" | "payment" | "booking" | "concierge" | "account" | "other";
+export type SupportReport = {
+  id: string; user_id: string; user_name: string; user_email: string; category: ReportCategory; message: string;
+  context: string | null; status: "open" | "resolved"; created_at: string; resolved_at: string | null;
 };
 export type MyDeal = { pct: number; qty: number; expires_at: string | null };
 export type DoorStaff = { id: string; venue_id: string; venue_name: string; user_id: string | null; name: string; email: string; status: "active" | "invited"; every_night: boolean; shift_event_ids: string[]; created_at: string };

@@ -105,6 +105,11 @@ export default function AdminDashboard() {
             <Text style={[styles.rowTitle, { flex: 1 }]}>Concierge inbox</Text>
             <FeatherIcon name="chevron-right" size={18} color={colors.muted} />
           </Pressable>
+          <Pressable testID="admin-reports-btn" onPress={() => router.push("/admin/reports")} style={styles.listRow}>
+            <FeatherIcon name="flag" size={18} color={colors.brandPrimary} />
+            <Text style={[styles.rowTitle, { flex: 1 }]}>Problem reports</Text>
+            <FeatherIcon name="chevron-right" size={18} color={colors.muted} />
+          </Pressable>
           <Pressable testID="admin-payouts-btn" onPress={() => router.push("/admin/payouts")} style={styles.listRow}>
             <FeatherIcon name="credit-card" size={18} color={colors.brandPrimary} />
             <Text style={[styles.rowTitle, { flex: 1 }]}>Payouts · venues & promoters</Text>
@@ -221,7 +226,7 @@ const styles = StyleSheet.create({
   rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   smallBtn: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: colors.brandPrimary, paddingHorizontal: spacing.md, height: 36, borderRadius: radius.pill },
   smallBtnText: { color: colors.onBrandPrimary, fontSize: 13, fontWeight: "700" },
-  listRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, paddingVertical: spacing.sm, borderTopWidth: 0.5, borderTopColor: colors.divider },
+  listRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, minHeight: 44, paddingVertical: spacing.sm, borderTopWidth: 0.5, borderTopColor: colors.divider },
   rowTitle: { color: colors.onSurface, fontSize: 15, fontWeight: "700" },
   rowSub: { color: colors.muted, fontSize: 12, marginTop: 2 },
   pill: { fontSize: 10, fontWeight: "800", letterSpacing: 1, paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: radius.sm, overflow: "hidden" },

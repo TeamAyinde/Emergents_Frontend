@@ -13,6 +13,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import FeatherIcon from "@react-native-vector-icons/feather";
 
+import { openLegal } from "@/src/legal";
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth-context";
 import { colors, radius, spacing } from "@/src/theme";
@@ -353,6 +354,25 @@ export default function Profile() {
             <FeatherIcon name="chevron-right" size={18} color={colors.muted} />
           </Pressable>
         ) : null}
+
+        <Pressable testID="help-support-btn" onPress={() => router.push("/support")} style={styles.prefRow}>
+          <View style={styles.rowIcon}>
+            <FeatherIcon name="life-buoy" size={16} color={colors.brandPrimary} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowTitle}>Help & support</Text>
+            <Text style={styles.rowSub}>Report a problem · Support & FAQ</Text>
+          </View>
+          <FeatherIcon name="chevron-right" size={18} color={colors.muted} />
+        </Pressable>
+
+        <Pressable testID="privacy-policy-btn" onPress={() => openLegal("privacy")} style={styles.prefRow}>
+          <View style={styles.rowIcon}>
+            <FeatherIcon name="shield" size={16} color={colors.brandPrimary} />
+          </View>
+          <Text style={[styles.rowTitle, { flex: 1 }]}>Privacy policy</Text>
+          <FeatherIcon name="external-link" size={16} color={colors.muted} />
+        </Pressable>
 
         <Pressable testID="logout-btn" onPress={signOut} style={styles.logout}>
           <FeatherIcon name="log-out" size={16} color={colors.brandSecondary} />

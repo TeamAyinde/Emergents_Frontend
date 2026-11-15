@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useAuth } from "@/src/auth-context";
 import { LuxButton } from "@/src/ui";
+import { openLegal } from "@/src/legal";
 import { colors, radius, spacing } from "@/src/theme";
 import type { User } from "@/src/api";
 import { startCheckout } from "@/src/payments";
@@ -188,6 +189,13 @@ export default function SignUp() {
           </>
         )}
 
+        <Text style={styles.legal}>
+          By creating an account you agree to our{" "}
+          <Text testID="signup-privacy-link" style={styles.footerLink} onPress={() => openLegal("privacy")}>Privacy Policy</Text>
+          {" · "}
+          <Text testID="signup-support-link" style={styles.footerLink} onPress={() => openLegal("support")}>Support</Text>
+        </Text>
+
         <Pressable onPress={() => router.replace("/(auth)/sign-in")} style={styles.footer}>
           <Text style={styles.footerText}>
             Have an account? <Text style={styles.footerLink}>Sign in</Text>
@@ -273,6 +281,7 @@ const styles = StyleSheet.create({
   boxOn: { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary },
   check: { color: colors.onBrandPrimary, fontSize: 14, fontWeight: "800" },
   optinText: { flex: 1, color: colors.onSurfaceSecondary, fontSize: 13, lineHeight: 19 },
+  legal: { color: colors.muted, fontSize: 13, textAlign: "center", marginTop: spacing.lg, lineHeight: 32 },
   footer: { alignItems: "center", marginTop: spacing.xl },
   footerText: { color: colors.muted, fontSize: 14 },
   footerLink: { color: colors.brandPrimary, fontWeight: "700" },
