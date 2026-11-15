@@ -147,7 +147,8 @@ async def _seed_core(db):
         await db.venues.insert_one(doc)
 
     # Events (seed only once per venue)
-    venues_in_db = await db.venues.find({}, {"_id": 0}).to_list(None)
+    # only the curated venues — never venues created by tests or owners
+    venues_in_db = await db.venues.find({"id": {"$not": {"$regex": "^TEST_"}}, "name": {"$not": {"$regex": "^TEST_"}}}, {"_id": 0}).to_list(None)
     titles = [
         "Midnight Gold — Grand Opening",
         "Crimson Hour: Open Decks",

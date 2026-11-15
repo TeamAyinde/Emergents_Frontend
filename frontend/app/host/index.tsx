@@ -11,6 +11,7 @@ import { BoostCard } from "@/src/boost-card";
 import { EarningsCard } from "@/src/earnings-card";
 import { HostFeedbackCard } from "@/src/host-feedback-card";
 import { DoorStaffCard } from "@/src/door-staff-card";
+import { DealLeaderboard, MonthReportCard } from "@/src/host-insights";
 
 export default function HostStudio() {
   const router = useRouter();
@@ -47,6 +48,8 @@ export default function HostStudio() {
               {venues?.length ? <Text style={styles.section}>Featured boosts</Text> : null}
               {venues?.map((v) => <BoostCard key={v.id} venue={v} />)}
               {venues ? <DoorStaffCard venues={venues} /> : null}
+              <MonthReportCard />
+              <DealLeaderboard />
               <Text style={styles.section}>Your events</Text>
             </View>
           }

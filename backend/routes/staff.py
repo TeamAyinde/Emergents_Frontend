@@ -30,6 +30,8 @@ class StaffOut(BaseModel):
     name: str
     email: str
     status: str = "active"  # "active" | "invited"
+    every_night: bool = True  # False = only the nights in shift_event_ids
+    shift_event_ids: List[str] = []
     created_at: datetime
 
 
@@ -47,8 +49,14 @@ class DutyOut(BaseModel):
     events: List[DutyEvent]
 
 
-async def is_door_staff(venue_id, user_id: str) -> bool:
-    return bool(venue_id) and bool(await db.door_staff.find_one({"venue_id": venue_id, "user_id": user_id, "active": True}, {"_id": 1}))
+async def is_door_staff(venue_id, user_id: str, event_id: Optional[str] = None) -> bool:
+    """Active door staff for the venue — and, when `event_id` is given, on shift for that night."""
+    if not venue_id:
+        return False
+    row = await db.door_staff.find_one({"venue_id": venue_id, "user_id": user_id, "active": True}, {"_id": 0})
+    if not row:
+        return False
+    return event_id is None or row.get("every_night", True) or event_id in (row.get("shift_event_ids") or [])
 
 
 async def _my_venues(user: dict) -> dict:
@@ -128,10 +136,14 @@ async def remove_staff(sid: str, user: HostDep):
 @router.get("/staff/duty", response_model=DutyOut)
 async def my_duty(user: UserDep):
     """Venues I'm door staff for, plus their events from 12 hours ago onwards."""
-    rows = await db.door_staff.find({"user_id": user["id"], "active": True}, {"_id": 0, "venue_id": 1, "venue_name": 1}).to_list(50)
-    ids = [r["venue_id"] for r in rows]
+    rows = await db.door_staff.find({"user_id": user["id"], "active": True}, {"_id": 0}).to_list(50)
+    by_venue = {r["venue_id"]: r for r in rows}
     since = datetime.now(timezone.utc) - timedelta(hours=12)
-    events = [DutyEvent(id=e["id"], title=e["title"], date=e["date"], venue_name=e.get("venue_name", ""),
-                        tickets_sold=e.get("tickets_sold", 0), capacity=e.get("capacity") or 200)
-              async for e in db.events.find({"venue_id": {"$in": ids}, "date": {"$gte": since}}, {"_id": 0}).sort("date", 1).limit(20)]
+    events = []
+    async for e in db.events.find({"venue_id": {"$in": list(by_venue)}, "date": {"$gte": since}}, {"_id": 0}).sort("date", 1).limit(60):
+        r = by_venue[e["venue_id"]]
+        if r.get("every_night", True) or e["id"] in (r.get("shift_event_ids") or []):  # only my shifts
+            events.append(DutyEvent(id=e["id"], title=e["title"], date=e["date"], venue_name=e.get("venue_name", ""),
+                                    tickets_sold=e.get("tickets_sold", 0), capacity=e.get("capacity") or 200))
+    events = events[:20]
     return DutyOut(venues=[r["venue_name"] for r in rows], events=events)

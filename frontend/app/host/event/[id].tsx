@@ -7,6 +7,7 @@ import FeatherIcon from "@react-native-vector-icons/feather";
 import { api, EventRequest } from "@/src/api";
 import { DealCard } from "@/src/deal-card";
 import { SummaryCard } from "@/src/summary-card";
+import { ShiftsCard } from "@/src/shifts-card";
 import { colors, radius, spacing } from "@/src/theme";
 
 export default function HostEvent() {
@@ -25,6 +26,10 @@ export default function HostEvent() {
     },
   });
   const pending = (data?.requests ?? []).filter((r) => r.status === "pending");
+  const vip = useMutation({
+    mutationFn: ({ uid, on }: { uid: string; on: boolean }) => (on ? api.flagVip(ev!.venue_id, uid) : api.unflagVip(ev!.venue_id, uid)),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["host-event", id] }),
+  });
 
   return (
     <View style={styles.root}>
@@ -48,6 +53,7 @@ export default function HostEvent() {
             <DealCard eventId={id!} spotsLeft={(ev.capacity ?? 200) - ev.tickets_sold} upcoming={new Date(ev.date) > new Date()} />
           ) : null}
           {ev && new Date(ev.date) < new Date() ? <SummaryCard eventId={id!} /> : null}
+          {ev && new Date(ev.date).getTime() > Date.now() - 12 * 3600 * 1000 ? <ShiftsCard eventId={id!} /> : null}
           <Section title={`Requests & waitlist (${pending.length})`}>
             {pending.length === 0 ? <Text style={styles.muted}>Nobody waiting.</Text> : null}
             {pending.map((r) => (
@@ -60,11 +66,19 @@ export default function HostEvent() {
             {data.guests.length === 0 ? <Text style={styles.muted}>No tickets yet.</Text> : null}
             {data.guests.map((g) => (
               <View key={g.ticket_id} style={styles.row} testID={`guest-${g.ticket_id}`}>
-                <Text style={styles.name}>{g.name}{g.quantity > 1 ? ` +${g.quantity - 1}` : ""}</Text>
+                {ev?.venue_id ? (
+                  <Pressable testID={`vip-toggle-${g.ticket_id}`} hitSlop={8} style={styles.star} disabled={vip.isPending}
+                    onPress={() => vip.mutate({ uid: g.user_id, on: !g.vip })}>
+                    <FeatherIcon name="star" size={18} color={g.vip ? colors.brandPrimary : colors.muted} />
+                  </Pressable>
+                ) : null}
+                <Text style={styles.name}>{g.name}{g.quantity > 1 ? ` +${g.quantity - 1}` : ""}{g.vip ? " · VIP" : ""}</Text>
                 <Text style={[styles.pill, g.checked_in ? styles.pillOk : styles.pillWait]}>{g.checked_in ? "IN" : "#" + g.ticket_id.slice(0, 8).toUpperCase()}</Text>
               </View>
             ))}
           </Section>
+
+          {vip.error ? <Text style={styles.err} testID="vip-error">{vip.error.message}</Text> : null}
 
           <Section title={`Table bookings (${data.tables.length})`}>
             {data.tables.length === 0 ? <Text style={styles.muted}>No tables booked yet.</Text> : null}
@@ -129,7 +143,8 @@ const styles = StyleSheet.create({
   err: { color: colors.error, fontSize: 13 },
   row: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: spacing.sm, borderTopWidth: 0.5, borderTopColor: colors.divider, gap: spacing.sm },
   rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: spacing.sm },
-  name: { color: colors.onSurface, fontSize: 15, fontWeight: "700" },
+  name: { color: colors.onSurface, fontSize: 15, fontWeight: "700", flex: 1 },
+  star: { width: 32, height: 44, alignItems: "center", justifyContent: "center" },
   money: { color: colors.brandPrimary, fontSize: 15, fontWeight: "800" },
   req: { paddingVertical: spacing.sm, borderTopWidth: 0.5, borderTopColor: colors.divider, gap: spacing.xs },
   actions: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.xs },

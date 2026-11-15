@@ -25,6 +25,7 @@ class Arrival(BaseModel):
     name: str
     quantity: int
     at: datetime
+    vip: bool = False
 
 
 class DealOut(BaseModel):
@@ -45,6 +46,9 @@ class GuestHit(BaseModel):
     quantity: int
     checked_in: bool
     checked_in_at: Optional[datetime] = None
+    vip: bool = False
+    vip_note: Optional[str] = None
+    user_id: Optional[str] = None  # owners/admins only (to flag VIPs)
 
 
 class LiveOut(BaseModel):
@@ -88,8 +92,8 @@ async def _live_access(eid: str, user: dict) -> tuple[dict, bool]:
     ev = await db.events.find_one({"id": eid}, {"_id": 0})
     if not ev:
         raise HTTPException(404, "Event not found")
-    if not await is_door_staff(ev.get("venue_id"), user["id"]):
-        raise HTTPException(403, "Not your event")
+    if not await is_door_staff(ev.get("venue_id"), user["id"], eid):
+        raise HTTPException(403, "Not your event or not your shift")
     return ev, True
 
 
@@ -101,13 +105,17 @@ async def live(eid: str, user: UserDep):
         {"$group": {"_id": {"$dateTrunc": {"date": "$checked_in_at", "unit": "hour"}}, "n": {"$sum": "$quantity"}}},
         {"$sort": {"_id": 1}},
     ]).to_list(48)
+    from routes.venueops import vip_ids  # noqa: E402
+
     recent = []
-    async for t in db.tickets.find({"event_id": eid, "checked_in": True}, {"_id": 0}).sort("checked_in_at", -1).limit(8):
+    last = await db.tickets.find({"event_id": eid, "checked_in": True}, {"_id": 0}).sort("checked_in_at", -1).limit(8).to_list(8)
+    vips = await vip_ids(ev.get("venue_id"), [t["user_id"] for t in last])
+    for t in last:
         u = await db.users.find_one({"id": t["user_id"]}, {"_id": 0, "full_name": 1})
         name = (u or {}).get("full_name") or "Guest"
         parts = name.split()
         recent.append(Arrival(name=parts[0] + (f" {parts[1][0]}." if len(parts) > 1 else ""), quantity=t["quantity"],
-                              at=t.get("checked_in_at") or t["created_at"]))
+                              at=t.get("checked_in_at") or t["created_at"], vip=t["user_id"] in vips))
     total = sum(h["n"] for h in hours)
     if not hours:  # older check-ins without a timestamp
         agg = await db.tickets.aggregate([{"$match": {"event_id": eid, "checked_in": True}},
@@ -174,7 +182,11 @@ async def search_guests(eid: str, user: UserDep, q: str = ""):
     q = q.strip().lower()
     if len(q) < 2:
         return []
+    from routes.venueops import vip_ids  # noqa: E402
+
+    ev = await db.events.find_one({"id": eid}, {"_id": 0, "venue_id": 1})
     tickets = await db.tickets.find({"event_id": eid}, {"_id": 0}).to_list(None)
+    vips = await vip_ids((ev or {}).get("venue_id"), list({t["user_id"] for t in tickets}))
     users = {u["id"]: u async for u in db.users.find({"id": {"$in": list({t["user_id"] for t in tickets})}},
                                                      {"_id": 0, "id": 1, "full_name": 1, "email": 1})}
     out = []
@@ -187,10 +199,12 @@ async def search_guests(eid: str, user: UserDep, q: str = ""):
             local, domain = email.split("@", 1)
             email = f"{local[:2]}•••@{domain}"
         out.append(GuestHit(ticket_id=t["id"], name=name, email=email, quantity=t["quantity"],
-                            checked_in=bool(t.get("checked_in")), checked_in_at=t.get("checked_in_at")))
+                            checked_in=bool(t.get("checked_in")), checked_in_at=t.get("checked_in_at"),
+                            vip=t["user_id"] in vips, vip_note=vips.get(t["user_id"]),
+                            user_id=None if staff_only else t["user_id"]))
         if len(out) >= 25:
             break
-    return sorted(out, key=lambda g: (g.checked_in, g.name.lower()))
+    return sorted(out, key=lambda g: (g.checked_in, not g.vip, g.name.lower()))
 
 
 class NightTotals(BaseModel):

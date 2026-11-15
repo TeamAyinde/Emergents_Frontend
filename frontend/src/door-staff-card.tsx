@@ -20,6 +20,10 @@ export function DoorStaffCard({ venues }: { venues: Venue[] }) {
       qc.invalidateQueries({ queryKey: ["door-staff"] });
     },
   });
+  const schedule = useMutation({
+    mutationFn: ({ id, every }: { id: string; every: boolean }) => api.setEveryNight(id, every),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["door-staff"] }),
+  });
   const remove = useMutation({
     mutationFn: api.removeDoorStaff,
     onSuccess: () => qc.invalidateQueries({ queryKey: ["door-staff"] }),
@@ -41,7 +45,7 @@ export function DoorStaffCard({ venues }: { venues: Venue[] }) {
   return (
     <View style={styles.card} testID="door-staff-card">
       <Text style={styles.title}>Door staff</Text>
-      <Text style={styles.sub}>Invite anyone by email. New people get a sign-up link. Staff can scan tickets and see the live counter, nothing else.</Text>
+      <Text style={styles.sub}>Invite anyone by email; new people get a sign-up link. Staff scan tickets and see the live counter. Assign shifts on each event.</Text>
       {venues.length > 1 ? (
         <View style={styles.chips}>
           {venues.map((v) => (
@@ -76,6 +80,11 @@ export function DoorStaffCard({ venues }: { venues: Venue[] }) {
               {s.status === "invited" ? <Text style={styles.badge} testID={`staff-invited-${s.id}`}>Invited</Text> : null}
             </View>
             <Text style={styles.sub} numberOfLines={1}>{s.status === "invited" ? `Sign-up link sent · ${s.venue_name}` : `${s.email} · ${s.venue_name}`}</Text>
+            <Pressable testID={`staff-schedule-${s.id}`} onPress={() => schedule.mutate({ id: s.id, every: !s.every_night })} hitSlop={6}>
+              <Text style={styles.sched}>
+                {s.every_night ? "Every night · tap for shifts only" : `${s.shift_event_ids.length} shift${s.shift_event_ids.length === 1 ? "" : "s"} · tap for every night`}
+              </Text>
+            </Pressable>
           </View>
           <Pressable testID={`staff-remove-${s.id}`} onPress={() => confirmRemove(s.id, s.name)} style={styles.removeBtn} hitSlop={8}>
             <FeatherIcon name="x" size={16} color={colors.muted} />
@@ -109,6 +118,7 @@ const styles = StyleSheet.create({
     color: colors.brandPrimary, fontSize: 11, fontWeight: "800", paddingHorizontal: spacing.sm, paddingVertical: 2,
     borderRadius: radius.pill, backgroundColor: colors.brandTertiary, overflow: "hidden", flexShrink: 0,
   },
+  sched: { color: colors.brandPrimary, fontSize: 12, fontWeight: "700", paddingVertical: 14 },
   removeBtn: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
   err: { color: colors.error, fontSize: 13 },
 });

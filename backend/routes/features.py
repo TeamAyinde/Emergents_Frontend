@@ -417,9 +417,11 @@ async def host_events(user: HostDep):
 
 class HostGuest(BaseModel):
     ticket_id: str
+    user_id: str
     name: str
     quantity: int
     checked_in: bool
+    vip: bool = False
 
 
 class HostEventDetail(BaseModel):
@@ -430,12 +432,17 @@ class HostEventDetail(BaseModel):
 
 @router.get("/host/events/{eid}", response_model=HostEventDetail)
 async def host_event_detail(eid: str, user: HostDep):
-    await _own_event(eid, user)
+    from routes.venueops import vip_ids  # noqa: E402
+
+    ev = await _own_event(eid, user)
     reqs = [RequestOut(**r) async for r in db.event_requests.find({"event_id": eid}, {"_id": 0}).sort("created_at", ASCENDING)]
     guests = []
-    async for t in db.tickets.find({"event_id": eid}, {"_id": 0}).sort("created_at", ASCENDING):
+    tickets = await db.tickets.find({"event_id": eid}, {"_id": 0}).sort("created_at", ASCENDING).to_list(None)
+    vips = await vip_ids(ev.get("venue_id"), [t["user_id"] for t in tickets])
+    for t in tickets:
         u = await db.users.find_one({"id": t["user_id"]}, {"_id": 0, "full_name": 1})
-        guests.append(HostGuest(ticket_id=t["id"], name=u["full_name"] if u else "Guest", quantity=t["quantity"], checked_in=t["checked_in"]))
+        guests.append(HostGuest(ticket_id=t["id"], user_id=t["user_id"], name=u["full_name"] if u else "Guest",
+                                quantity=t["quantity"], checked_in=t["checked_in"], vip=t["user_id"] in vips))
     tables = [TableBookingOut(**b) async for b in db.table_bookings.find({"event_id": eid}, {"_id": 0}).sort("created_at", ASCENDING)]
     return HostEventDetail(requests=reqs, guests=guests, tables=tables)
 

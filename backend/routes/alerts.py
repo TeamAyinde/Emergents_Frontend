@@ -207,9 +207,15 @@ async def _recap_emails(items: list, since: datetime) -> None:
         await asyncio.sleep(0.6)  # stay under the email provider's rate limit
 
 
+async def _monthly() -> int:
+    from routes.venueops import send_monthly_reports  # noqa: E402
+
+    return await send_monthly_reports()
+
+
 async def alerts_loop() -> None:
     while True:
-        for job in (send_waitlist_spots, send_table_offers, send_promoter_recap, send_night_summaries):
+        for job in (send_waitlist_spots, send_table_offers, send_promoter_recap, send_night_summaries, _monthly):
             try:
                 await job()
             except Exception:

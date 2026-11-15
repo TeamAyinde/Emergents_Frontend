@@ -66,6 +66,7 @@ INDEXES: dict[str, list[IndexModel]] = {
         IndexModel([("promoter_id", ASCENDING)], name="promoter"),
         IndexModel([("event_date", ASCENDING)], name="event_date"),
     ],
+    "venue_vips": [IndexModel([("venue_id", ASCENDING), ("user_id", ASCENDING)], name="venue_user", unique=True)],
     "door_staff": [
         IndexModel([("venue_id", ASCENDING), ("user_id", ASCENDING)], name="venue_user"),
         IndexModel([("email", ASCENDING)], name="email"),
@@ -782,8 +783,8 @@ async def check_in(
         from routes.staff import is_door_staff  # noqa: E402
 
         ev = await db.events.find_one({"id": t["event_id"]}, {"_id": 0, "venue_id": 1})
-        if not await is_door_staff((ev or {}).get("venue_id"), user["id"]):
-            raise HTTPException(403, "Only door staff for this venue can check in this ticket")
+        if not await is_door_staff((ev or {}).get("venue_id"), user["id"], t["event_id"]):
+            raise HTTPException(403, "Only door staff on shift for this event can check in this ticket")
     res = await db.tickets.update_one(
         {"id": t["id"], "checked_in": False},
         {"$set": {"checked_in": True, "checked_in_at": datetime.now(timezone.utc)}},
@@ -795,6 +796,9 @@ async def check_in(
     from routes.notify import background  # noqa: E402
 
     background(door_rush(t["event_id"], t["quantity"], await bump_checkins(t["event_id"], t["quantity"])))
+    from routes.venueops import vip_arrival  # noqa: E402
+
+    background(vip_arrival(t))
     return TicketOut(**t)
 
 
@@ -973,6 +977,7 @@ from routes.engage import router as engage_router  # noqa: E402
 from routes.push import router as push_router  # noqa: E402
 from routes.hostlive import router as hostlive_router  # noqa: E402
 from routes.staff import router as staff_router  # noqa: E402
+from routes.venueops import router as venueops_router  # noqa: E402
 
 app.include_router(api)
 app.include_router(extras_router)
@@ -986,6 +991,7 @@ app.include_router(engage_router)
 app.include_router(push_router)
 app.include_router(hostlive_router)
 app.include_router(staff_router)
+app.include_router(venueops_router)
 
 app.add_middleware(
     CORSMiddleware,

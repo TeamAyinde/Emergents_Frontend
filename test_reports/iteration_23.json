@@ -1,0 +1,52 @@
+{
+  "summary": "Iteration 23 tested door shift schedule, deal leaderboard, VIP arrival alerts and the monthly venue report. Backend: 19/19 new pytest cases passed (push and email were monkeypatched and run in-process; the day-1 schedule guard was tested with a patched datetime). Regression iter21 + iter22: 22/22 passed. Frontend at mobile 375x667: ShiftsCard toggles, VIP star toggle (' · VIP'), DoorStaffCard schedule toggle text, MonthReportCard, DealLeaderboard, live arrivals ⭐/VIP, guest search VIP + note (email masked for staff), /door duty list following shifts, and pref-monthly (owner only, hidden for guest) all work. One logic issue: the 'so far' report counts upcoming events. Several minor UX issues are listed below. No deprecated Expo packages detected.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/host/report (current month) / venueops.venue_month", "issue": "Events later in the month that have not happened yet are counted: their pre-sold tickets go into 'sold' but arrived=0. This pulls the show-up rate down for the in-progress month (Host Studio showed Mirage Lounge 0% and the TEST venue 33.3% because of future events), and 'N events' includes nights that have not happened. Fix: for the current month, only count events with date <= now (or compute show_rate from past events only)."},
+      {"endpoint": "services/seed.py seed_all (runs on every backend start; uvicorn --reload)", "issue": "Any venue with no events gets a seeded-title event on each restart, including TEST_ venues that tests insert. Writing files under /app/backend restarts the server, so this race leaves orphan public events. One such event, left by a previous iteration (not created by this run), is still in the DB: id 48251cc3-be3f-4b14-a188-5c055109a039 'Velvet Sessions w/ DJ Nyx', venue_id TEST_v_38620d7d (venue deleted, venue_name 'TEST_ Iter22 Lounge'). Please delete it by id. Consider seeding events only on first seed, or skipping venues whose id starts with TEST_."},
+      {"endpoint": "GET /api/host/report (admin)", "issue": "Runs night_stats for every venue x 2 months x every event, sequentially. Fine now, but slow as data grows."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "ShiftsCard", "issue": "Turning off an 'Every night' staffer for one event silently makes them shifts-only with zero shifts, so they also lose every other night. Their status then reads 'Off' with no explanation. Add a confirm or hint (e.g. 'X will only work nights you switch on').", "testID": "shift-<sid>", "priority": "MEDIUM"},
+      {"component": "Live door screen (staff off shift)", "issue": "The 403 'Not your event or not your shift' is retried by react-query's default 3 retries, so the spinner shows for about 7s before the error. Set retry:false (or skip retries on 403) for this query.", "testID": "live-count", "priority": "LOW"},
+      {"component": "Host event guest list VIP toggle", "issue": "The vip mutation has no error display and is not disabled while pending. There is no UI to add a VIP note (API only). The outline Feather star shows VIP state by colour only.", "testID": "vip-toggle-<ticket_id>", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Host Studio DoorStaffCard", "issues": ["staff-schedule-<id> Pressable measures 265x26px (only 38px tall even with hitSlop 6), below the 44pt minimum touch target"]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_nocturne_iter23_shifts_leaderboard_vips_report.py",
+    "/app/backend/tests/iter23_ui_seed.py",
+    "/app/test_reports/pytest/pytest_iter23.xml"
+  ],
+  "action_items": [
+    "venue_month: exclude events that have not happened yet (date > now) from events/sold/show_rate for the in-progress month",
+    "ShiftsCard: confirm or explain before switching an every-night staffer to shifts-only",
+    "Live screen: no retry on 403 so off-shift staff see the error immediately",
+    "VIP star: show mutation errors, disable while pending; optionally add a note input",
+    "Increase staff-schedule-<id> touch target to >=44px (paddingVertical or minHeight)",
+    "Delete orphan event 48251cc3-be3f-4b14-a188-5c055109a039 (TEST_ Iter22 Lounge leftover) and harden seed_all against TEST_ venues"
+  ],
+  "critical_code_review_comments": [
+    "set_every_night returns 404 for a non-owner (spec allows 403/404); set_shift and _own_event return 403/404 as expected",
+    "Monthly guard is correct: conditional upsert on _id venue_report raises DuplicateKeyError when the month is already recorded, so it runs once per month and is race-safe",
+    "report_html greets owner_name.split(' ')[0], which is fine for real names",
+    "vip_arrival passes host_ids that can contain None; notify() drops falsy ids and dedups, so this is OK"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_nocturne_iter23_shifts_leaderboard_vips_report.py",
+    "/app/backend/tests/iter23_ui_seed.py"
+  ],
+  "success_rate": {"backend": "100% (19/19 new, 22/22 regression)", "frontend": "100% of requested flows work; 1 logic issue + minor UX issues"},
+  "seed_data_creation": "All TEST_ venues, events, tickets, users, door_staff, venue_vips, payables and feedback were created and then removed by id. The settings doc venue_report did not exist before and was removed after the test. No deals/flags were left on seeded events. An event auto-created by seed_all for this run's TEST venue (97a56d09...) was also deleted.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: cd /app/backend/tests && python -m pytest test_nocturne_iter23_shifts_leaderboard_vips_report.py -n 0. UI: python iter23_ui_seed.py seed|clean (state in /tmp/iter23_ui_seed.json; inject owner_token/staff_token into localStorage key nocturne_token). Writing files under /app/backend triggers uvicorn reload + seed_all, which can attach a seeded event to a TEST_ venue; check events with venue_id /^TEST_v_/ after cleanup.",
+  "rca_of_issue": "Low show-up rate in the in-app month report: venue_report -> venue_month selects all events with date in [month_start, month_end), including future ones, and night_stats counts their sold tickets with 0 arrivals."
+}

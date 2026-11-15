@@ -50,7 +50,8 @@ export function GuestSearch({ eventId }: { eventId: string }) {
       {(q.length >= 2 ? data ?? [] : []).map((g) => (
         <View key={g.ticket_id} style={styles.row} testID={`guest-hit-${g.ticket_id}`}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.name}>{g.name}{g.quantity > 1 ? ` +${g.quantity - 1}` : ""}</Text>
+            <Text style={styles.name}>{g.vip ? "⭐ " : ""}{g.name}{g.quantity > 1 ? ` +${g.quantity - 1}` : ""}</Text>
+            {g.vip ? <Text style={styles.vip}>VIP{g.vip_note ? ` · ${g.vip_note}` : ""}</Text> : null}
             <Text style={styles.muted} numberOfLines={1}>{g.email} · #{g.ticket_id.slice(0, 8)}</Text>
           </View>
           {g.checked_in ? (
@@ -79,6 +80,7 @@ const styles = StyleSheet.create({
   row: { flexDirection: "row", alignItems: "center", gap: spacing.md, paddingVertical: spacing.sm, borderTopWidth: 0.5, borderTopColor: colors.divider },
   name: { color: colors.onSurface, fontSize: 15, fontWeight: "700" },
   muted: { color: colors.muted, fontSize: 13 },
+  vip: { color: colors.brandPrimary, fontSize: 12, fontWeight: "800" },
   done: { color: colors.success, fontSize: 13, fontWeight: "700" },
   btn: { height: 44, paddingHorizontal: spacing.lg, borderRadius: radius.pill, alignItems: "center", justifyContent: "center", backgroundColor: colors.brandPrimary },
   btnText: { color: colors.onBrandPrimary, fontWeight: "800", fontSize: 13 },

@@ -17,6 +17,7 @@ export default function HostLive() {
   const insets = useSafeAreaInsets();
   const { data, isLoading, error, refetch, isRefetching } = useQuery({
     queryKey: ["host-live", id], queryFn: () => api.hostLive(id!), refetchInterval: 5000,
+    retry: (n, e) => !/not your|403/i.test(String((e as Error)?.message)) && n < 2,
   });
 
   const pct = data && data.capacity ? Math.min(100, Math.round((100 * data.checked_in) / data.capacity)) : 0;
@@ -87,7 +88,7 @@ export default function HostLive() {
             {data.recent.length === 0 ? <Text style={styles.muted}>Nobody yet.</Text> : null}
             {data.recent.map((a, i) => (
               <View key={a.at + i} style={styles.row}>
-                <Text style={styles.name}>{a.name}{a.quantity > 1 ? ` +${a.quantity - 1}` : ""}</Text>
+                <Text style={styles.name}>{a.vip ? "⭐ " : ""}{a.name}{a.quantity > 1 ? ` +${a.quantity - 1}` : ""}{a.vip ? " · VIP" : ""}</Text>
                 <Text style={styles.muted}>{fmtTime(a.at)}</Text>
               </View>
             ))}

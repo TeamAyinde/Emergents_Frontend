@@ -223,6 +223,16 @@ export const api = {
   doorDuty: () => request<DoorDuty>("/staff/duty"),
   searchGuests: (eid: string, q: string) => request<GuestHit[]>(`/host/events/${eid}/guests?q=${encodeURIComponent(q)}`),
   eventSummary: (eid: string) => request<NightSummary>(`/host/events/${eid}/summary`),
+  eventShifts: (eid: string) => request<ShiftStaff[]>(`/host/events/${eid}/shifts`),
+  setShift: (eid: string, sid: string, on: boolean) =>
+    request<ShiftStaff>(`/host/events/${eid}/shifts/${sid}`, { method: "PUT", body: JSON.stringify({ on }) }),
+  setEveryNight: (sid: string, every_night: boolean) =>
+    request<{ every_night: boolean }>(`/host/staff/${sid}/schedule`, { method: "PUT", body: JSON.stringify({ every_night }) }),
+  dealLeaderboard: () => request<DealLevel[]>("/host/deals/leaderboard"),
+  flagVip: (vid: string, uid: string, note?: string) =>
+    request<{ vip: boolean }>(`/host/venues/${vid}/vips/${uid}`, { method: "PUT", body: JSON.stringify({ note: note ?? null }) }),
+  unflagVip: (vid: string, uid: string) => request<{ vip: boolean }>(`/host/venues/${vid}/vips/${uid}`, { method: "DELETE" }),
+  hostReport: (month?: string) => request<MonthReport[]>(`/host/report${month ? `?month=${month}` : ""}`),
   savePushPrefs: (p: PushPrefs) => request<PushPrefs>("/me/push-prefs", { method: "PUT", body: JSON.stringify(p) }),
   feedbackInfo: (ticketId: string) =>
     request<{ event_title: string; venue_name: string; event_date: string; submitted: boolean; rating: number | null; points: number; can_rate: boolean }>(
@@ -394,25 +404,35 @@ export type Gift = {
   redeemed: boolean; redeemed_by_name: string | null; email_status?: string | null; created_at: string;
 };
 export type PushPrefs = { event_night: boolean; updates: boolean; concierge: boolean; sales: boolean; door_rush: boolean; table_offers: boolean };
-export type EmailPrefs = { reminders: boolean; receipts: boolean; feedback: boolean; offers: boolean; recap: boolean; summary: boolean; newsletter: boolean };
+export type EmailPrefs = { reminders: boolean; receipts: boolean; feedback: boolean; offers: boolean; recap: boolean; summary: boolean; monthly: boolean; newsletter: boolean };
 export type HostDeal = {
   pct: number; sent_to: number; sent_at: string; expires_at: string | null; expired: boolean; buyers: number; tickets: number; revenue: number;
 };
-export type GuestHit = { ticket_id: string; name: string; email: string; quantity: number; checked_in: boolean; checked_in_at: string | null };
+export type GuestHit = {
+  ticket_id: string; name: string; email: string; quantity: number; checked_in: boolean; checked_in_at: string | null;
+  vip: boolean; vip_note: string | null; user_id: string | null;
+};
+export type ShiftStaff = { staff_id: string; name: string; email: string; status: string; every_night: boolean; on_shift: boolean };
+export type DealLevel = { pct: number; deals: number; sent_to: number; buyers: number; tickets: number; revenue: number; conversion: number };
+export type MonthStats = { events: number; sold: number; arrived: number; show_rate: number | null; revenue: number; rating: number | null; ratings: number };
+export type MonthReport = {
+  venue_id: string; venue_name: string; month: string; current: MonthStats; previous: MonthStats;
+  change: Partial<Record<"arrived" | "revenue" | "show_rate" | "rating", number>>;
+};
 export type NightTotals = { sold: number; arrived: number; no_shows: number; tables: number; revenue: number; show_rate: number | null };
 export type NightSummary = {
   event_id: string; title: string; date: string; night: NightTotals; peak: string | null;
   baseline: NightTotals | null; compared: number; change: Partial<Record<"arrived" | "revenue" | "show_rate", number>>;
 };
 export type MyDeal = { pct: number; qty: number; expires_at: string | null };
-export type DoorStaff = { id: string; venue_id: string; venue_name: string; user_id: string | null; name: string; email: string; status: "active" | "invited"; created_at: string };
+export type DoorStaff = { id: string; venue_id: string; venue_name: string; user_id: string | null; name: string; email: string; status: "active" | "invited"; every_night: boolean; shift_event_ids: string[]; created_at: string };
 export type DoorDuty = {
   venues: string[];
   events: { id: string; title: string; date: string; venue_name: string; tickets_sold: number; capacity: number }[];
 };
 export type HostLive = {
   event_id: string; title: string; date: string; capacity: number; tickets_sold: number; checked_in: number; waitlist: number;
-  by_hour: { hour: string; count: number }[]; recent: { name: string; quantity: number; at: string }[]; deal: HostDeal | null; is_staff_view: boolean;
+  by_hour: { hour: string; count: number }[]; recent: { name: string; quantity: number; at: string; vip: boolean }[]; deal: HostDeal | null; is_staff_view: boolean;
 };
 export type HostEarnings = {
   owed: number; paid: number;
@@ -524,7 +544,7 @@ export type HostEvent = {
 };
 export type HostEventDetail = {
   requests: EventRequest[];
-  guests: { ticket_id: string; name: string; quantity: number; checked_in: boolean }[];
+  guests: { ticket_id: string; user_id: string; name: string; quantity: number; checked_in: boolean; vip: boolean }[];
   tables: TableBooking[];
 };
 
