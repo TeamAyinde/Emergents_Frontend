@@ -371,6 +371,13 @@ export const api = {
     if (!res.ok) throw new Error("Export failed");
     return res.text();
   },
+  exportMyData: async () => {
+    const token = await tokenStore.getItem();
+    const res = await fetch(`${API_BASE}/me/export`, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) throw new Error("Couldn't prepare your data");
+    return res.text();
+  },
+  deleteMyAccount: () => request<{ deleted: boolean }>("/me", { method: "DELETE", body: JSON.stringify({ confirm: "DELETE" }) }),
   hostReportCsv: async (month: string) => {
     const token = await tokenStore.getItem();
     const res = await fetch(`${API_BASE}/host/report.csv?month=${month}`, { headers: { Authorization: `Bearer ${token}` } });

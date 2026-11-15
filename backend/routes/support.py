@@ -67,7 +67,10 @@ concierge requests and tools for promoters and venues. This policy explains what
 <p>We keep your data while your account is active. Booking and payment records may be kept longer where the law requires it, for example for tax and accounting.</p>
 <h2>Your choices &amp; rights</h2><ul>
 <li>Change email and notification preferences any time under <strong>Profile → Notifications</strong>.</li>
-<li>Ask us for a copy of your data, or for corrections or deletion of your account and data: {_contact_line()}. We reply within 30 days.</li></ul>
+<li><strong>Download your data</strong> any time: Profile → Help &amp; support → Download my data.</li>
+<li><strong>Delete your account</strong> any time in the app: Profile → Delete account. This removes your profile, concierge messages, reports and points;
+booking and payment records that venues and tax law require are kept without your name or contact details. You can also request deletion
+or corrections from outside the app: {_contact_line()}. We reply within 30 days.</li></ul>
 <h2>Age</h2><p>{APP_NAME} is for adults aged 18 and over (21+ where venues require it). We do not knowingly collect data from children.</p>
 <h2>Security</h2><p>Data is sent over encrypted connections (HTTPS), passwords are hashed, and access to personal data is limited to people who need it.</p>
 <h2>Changes</h2><p>If we change this policy we will update the date above and, for significant changes, tell you in the app.</p>
@@ -86,7 +89,8 @@ Tell us what happened and our team will follow up, usually within one business d
 <li><strong>Where is my ticket?</strong> Profile → My tickets. Show the QR code at the door.</li>
 <li><strong>A payment went wrong:</strong> report it in the app with the event name. Refunds go back to your original card.</li>
 <li><strong>Change notifications or emails:</strong> Profile → Notifications.</li>
-<li><strong>Delete my account or data:</strong> send a request from Report a problem (choose "Account &amp; privacy").</li></ul>
+<li><strong>Download my data:</strong> Profile → Help &amp; support → Download my data.</li>
+<li><strong>Delete my account:</strong> Profile → Delete account. Can't sign in? Email us from the address on your account and we'll delete it within 30 days.</li></ul>
 <p><a href="/api/legal/privacy">Privacy Policy</a></p>""")
 
 

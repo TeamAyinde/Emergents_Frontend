@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import FeatherIcon from "@react-native-vector-icons/feather";
 
 import { api, ReportCategory } from "@/src/api";
 import { openLegal } from "@/src/legal";
+import { saveFile } from "@/src/share-file";
 import { colors, radius, spacing } from "@/src/theme";
 import { LuxButton } from "@/src/ui";
 
@@ -30,6 +31,12 @@ export default function Support() {
   const [message, setMessage] = useState("");
   const [sent, setSent] = useState(false);
   const { data: mine } = useQuery({ queryKey: ["my-reports"], queryFn: api.myReports });
+  const [exportMsg, setExportMsg] = useState("");
+  const exportData = useMutation({
+    mutationFn: async () => saveFile(await api.exportMyData(), "nocturne-my-data.json", "application/json", "public.json"),
+    onSuccess: () => setExportMsg(Platform.OS === "web" ? "Your data file was downloaded." : ""),
+    onError: (e: Error) => setExportMsg(e.message),
+  });
   const send = useMutation({
     mutationFn: () => api.sendReport({ category, message: message.trim(), context: context ?? "profile" }),
     onSuccess: () => {
@@ -51,7 +58,12 @@ export default function Support() {
       <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg, paddingBottom: insets.bottom + spacing["2xl"] }}>
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Report a problem</Text>
-          <Text style={styles.muted}>Tell us what happened and we'll follow up, usually within one business day.</Text>
+          <Text style={styles.muted}>
+            Tell us what happened and we&apos;ll follow up, usually within one business day. You can also email{" "}
+            <Text testID="support-email-link" style={styles.mail} onPress={() => Linking.openURL("mailto:support@ayindetechnologies.com")}>
+              support@ayindetechnologies.com
+            </Text>
+          </Text>
           <View style={styles.chips}>
             {CATS.map((c) => (
               <Pressable key={c.key} testID={`report-cat-${c.key}`} onPress={() => setCategory(c.key)} style={[styles.chip, category === c.key && styles.chipOn]}>
@@ -72,7 +84,7 @@ export default function Support() {
           <LuxButton testID="report-submit" label="Send report" onPress={() => send.mutate()} loading={send.isPending}
             disabled={message.trim().length < 5} />
           {send.error ? <Text style={styles.err}>{send.error.message}</Text> : null}
-          {sent ? <Text style={styles.ok} testID="report-sent">Thanks — your report was sent. We'll be in touch.</Text> : null}
+          {sent ? <Text style={styles.ok} testID="report-sent">Thanks — your report was sent. We&apos;ll be in touch.</Text> : null}
         </View>
 
         {mine && mine.length ? (
@@ -91,6 +103,14 @@ export default function Support() {
         ) : null}
 
         <View style={styles.card}>
+          <Pressable testID="download-my-data" disabled={exportData.isPending} onPress={() => exportData.mutate()} style={styles.link}>
+            {exportData.isPending ? <ActivityIndicator color={colors.brandPrimary} /> : <FeatherIcon name="download" size={18} color={colors.brandPrimary} />}
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowTitle}>Download my data</Text>
+              <Text style={styles.muted}>Your account, bookings, payments and messages as a file</Text>
+            </View>
+          </Pressable>
+          {exportMsg ? <Text style={[styles.muted, exportData.isError && { color: colors.error }]} testID="export-data-msg">{exportMsg}</Text> : null}
           <Pressable testID="open-support-page" onPress={() => openLegal("support")} style={styles.link}>
             <FeatherIcon name="help-circle" size={18} color={colors.brandPrimary} />
             <Text style={[styles.rowTitle, { flex: 1 }]}>Support & FAQ</Text>
@@ -134,5 +154,6 @@ const styles = StyleSheet.create({
   pill: { fontSize: 10, fontWeight: "800", letterSpacing: 1, paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: radius.sm, overflow: "hidden" },
   pillOk: { backgroundColor: colors.success, color: colors.onSuccess },
   pillOpen: { backgroundColor: colors.brandTertiary, color: colors.brandPrimary },
+  mail: { color: colors.brandPrimary, fontWeight: "700", textDecorationLine: "underline" },
   link: { flexDirection: "row", alignItems: "center", gap: spacing.md, minHeight: 48 },
 });

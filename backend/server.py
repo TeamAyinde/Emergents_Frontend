@@ -526,7 +526,12 @@ async def list_venues(city: Optional[str] = None, q: Optional[str] = None):
     cursor = db.venues.find(filt, {"_id": 0}).sort("rating", DESCENDING)
     docs = [v async for v in cursor]
     ratings = await venue_ratings([v["id"] for v in docs])
-    venues = [VenueOut(**v, featured=_is_featured(v), **ratings.get(v["id"], {})) for v in docs]
+    venues = []
+    for v in docs:
+        try:
+            venues.append(VenueOut(**v, featured=_is_featured(v), **ratings.get(v["id"], {})))
+        except (ValidationError, TypeError):
+            logging.getLogger(__name__).warning("skipping malformed venue %s", v.get("id"))  # one bad record never breaks the list
     # boosted first, then by the rating guests actually see
     return sorted(venues, key=lambda v: (not v.featured, -(v.guest_rating or v.rating)))  # boosted venues first, stable by rating
 
@@ -979,6 +984,7 @@ from routes.hostlive import router as hostlive_router  # noqa: E402
 from routes.staff import router as staff_router  # noqa: E402
 from routes.venueops import router as venueops_router  # noqa: E402
 from routes.support import router as support_router  # noqa: E402
+from routes.account import router as account_router  # noqa: E402
 
 app.include_router(api)
 app.include_router(extras_router)
@@ -994,6 +1000,7 @@ app.include_router(hostlive_router)
 app.include_router(staff_router)
 app.include_router(venueops_router)
 app.include_router(support_router)
+app.include_router(account_router)
 
 app.add_middleware(
     CORSMiddleware,

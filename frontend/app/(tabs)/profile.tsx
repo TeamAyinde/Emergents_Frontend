@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import FeatherIcon from "@react-native-vector-icons/feather";
 
 import { openLegal } from "@/src/legal";
+import { DeleteAccountRow } from "@/src/delete-account";
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth-context";
 import { colors, radius, spacing } from "@/src/theme";
@@ -378,6 +379,8 @@ export default function Profile() {
           <FeatherIcon name="log-out" size={16} color={colors.brandSecondary} />
           <Text style={styles.logoutText}>Sign out</Text>
         </Pressable>
+
+        <DeleteAccountRow />
       </ScrollView>
     </View>
   );

@@ -1,0 +1,35 @@
+{
+  "summary": "Iteration 26: Google Play readiness (Delete account, Support email, Download my data). Backend: 9/9 new pytest passed (tests/test_nocturne_iter26_account_export_delete.py, -n 0), and the iter25 regression still passes (21/21 combined). Covered: /api/legal/privacy and /api/legal/support both show the mailto:support@ayindetechnologies.com link plus the in-app paths for 'Download my data' and 'Delete account'. GET /api/me/export returns 401 without a token or with a bad token. With a token it returns 200 application/json with Content-Disposition attachment nocturne-my-data.json, including exported_at, account (no password_hash, no _id) and every owned collection, with only the caller's records (checked against a second seeded user). DELETE /api/me returns 401 without auth, 400 for a wrong or empty confirm, and 422 when confirm is missing. ' delete ' is accepted. Deletion removes the user, after which the token gets 401 and login gets 401. concierge_messages, concierge_threads, support_reports, points_ledger and perk_claims are removed. Pending event_requests become cancelled and approved ones are left unchanged. door_staff and venue_vips are deactivated (venue_vips note set to None). tickets, table_bookings, reservations, payment_transactions and event_requests are kept with email, phone, notes and comment removed, user_deleted=true and user_name='Deleted member'. A deleted_accounts audit row is written. The Stripe cancel was attempted: the backend log shows DELETE subscriptions/sub_TEST_fake_i26 returning 404, which was logged without breaking the deletion. The email can register again. A venue owner who still owns a venue gets 400, and deletion succeeds once the venue is removed. The last-admin 400 was tested in-process with count_documents patched to 1, so the seeded admin was not touched. Frontend (390x844, fresh TEST_ accounts signed in via the UI): /support shows the support email, Download my data downloads nocturne-my-data.json with valid JSON and no password_hash, and export-data-msg reads 'Your data file was downloaded.' Profile shows Delete account below Sign out (358x48). The window.prompt shows the warning. Typing 'nope' or cancelling does nothing. Typing 'delete' deletes the account and redirects to /welcome, and signing in again shows 'Incorrect email or password'. A venue owner with a venue sees delete-account-error 'You still own venues...'. There were no page errors. Deprecated packages detected: none.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/me/export + DELETE /api/me", "issue": "OWNED maps gifts to user_id, but gifts are stored with buyer_id (routes/growth.py:152,193). The export always returns gifts=[] and deletion never scrubs the member's gifts: recipient_email and note stay attached to buyer_id. Use 'gifts': 'buyer_id' in OWNED and scrub on buyer_id. Reference: /app/backend/routes/account.py:20,69-71"},
+      {"endpoint": "DELETE /api/me", "issue": "door_staff rows are only deactivated. They keep the member's email and name (routes/staff.py:85), so personal data remains after deletion. Unset email and set the name to 'Deleted member'. Reference: /app/backend/routes/account.py:63"},
+      {"endpoint": "GET /api/me/export", "issue": "venue_vips rows about the member (VIP flag or note set by venues) are not included in the export, although deletion touches them. Consider adding them for completeness."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/support", "issues": ["The support email is plain text inside a paragraph, not a tappable mailto link. Consider a Pressable with Linking.openURL('mailto:support@ayindetechnologies.com')."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_nocturne_iter26_account_export_delete.py", "/app/backend/tests/iter26_ui_seed.py", "/app/test_reports/pytest/pytest_iter26.xml"],
+  "action_items": [
+    "Fix the gifts key in OWNED (buyer_id, not user_id) so gifts are exported and scrubbed on deletion (routes/account.py).",
+    "Scrub email and name on door_staff rows during account deletion.",
+    "Optional: include venue_vips in the export, and make the support email a mailto link on /support."
+  ],
+  "critical_code_review_comments": [
+    "GET /api/venues has no projection or validation guard. Any venue doc missing VenueOut fields makes the whole public list return 500, which I confirmed briefly with a minimal TEST_ venue doc. The test seed now copies a real venue's shape. A fault-tolerant listing would be more robust.",
+    "The account.py deletion runs many sequential update_many calls with no transaction. A failure partway through leaves the account partly scrubbed but still existing. This is acceptable because retrying is idempotent."
+  ],
+  "updated_files": ["/app/backend/tests/test_nocturne_iter26_account_export_delete.py (new)", "/app/backend/tests/iter26_ui_seed.py (new)"],
+  "success_rate": {"backend": "100% (9/9; plus iter25 12/12)", "frontend": "100%"},
+  "seed_data_creation": "Only TEST_ users, venues and records, all cleaned up by id. No seeded accounts were modified (all 4 still present). deleted_accounts audit rows for TEST_ users were removed.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run pytest -n 0 tests/test_nocturne_iter26_account_export_delete.py. For UI delete tests, run `python tests/iter26_ui_seed.py` (prints a TEST_ guest and a TEST_ venue_owner who owns a valid-shaped TEST_ venue), then `python tests/iter26_ui_seed.py clean <ids>`. On web, handle window.prompt with a page 'dialog' handler calling d.accept('DELETE')."
+}
